@@ -41,7 +41,7 @@ Quest'ultimo è anche un esempio di architettura ibrida: una CPU è composta da 
 Con il tempo, la tassonomia di Flynn è stata sottoposta all'aggiunta di nuove sottoclassi. Ad esempio, nella famiglia MIMD Shared Memory, si sono sviluppate due sottoclassi: SymmetricMultiProcessor (SMP) e ASymmetricMultiProcessor (ASMP).
 In un SMP, i core sono uguali tra loro, mentre in un ASMP vi sono core di diversi tipi. Nei sistemi ASMP, i processi vengono distribuiti ai core in base a dipendenza e tipologia.
 
-\subsection{Calcolo del costo}
+\section{Tempo di esecuzione di un algoritmo parallelo}
 Introduciamo al calcolo del costo di un algoritmo parallelo mediante un'algoritmo molto semplice: la somma di $n$ numeri.
 
 La somma di $n$ numeri è calcolata mediante un'assegnazione iniziale e $n-1$ somme. Poiché il costo di un'assegnazione è considerato nullo (consideriamo operazione un'operazione aritmetica tra interi o tra floating point), il costo computazionale di questo problema è
@@ -108,7 +108,7 @@ Intuitivamente, l'overhead misura quanto la parallelizzazione si allontana rispe
 Come visto, nel caso della somma parallela di $n$ numeri, $O_h$ è una funzione di $p\cdot \log_2(p)$. Si osservi che, superato un certo numero di processori, le performance iniziano a peggiorare: il rapporto $\frac{n}{p}$ converge a $0$, mentre l'overhead continua ad aumentare.
 Notiamo che $S(8) = 3.75$, che è minore della metá dello speedup ideale, ovvero $8$, mentre $S(2) = 1.88$ è il valore che più si avvicina al proprio speedup ideale, ovvero $2$. Dunque, il parallelismo viene meglio sfruttato con $2$ processori che con $8$ processori. 
 
-\subsubsection{Efficienza}
+\subsection{Efficienza}
 Come osservato, lo speedup non basta a misurare l'efficienza di un algoritmo parallelo. L'\keyword{efficienza} 
 $$E(p) := \frac{S(p)}{p}$$
 misura quanto l'algoritmo sfrutta il parallelismo del calcolatore. Il rapporto ideale è chiaramente 1.
@@ -124,7 +124,7 @@ misura quanto l'algoritmo sfrutta il parallelismo del calcolatore. Il rapporto i
   \end{equation*}
 \end{note}
 
-\subsubsection{Legge di Ware-Amdahl}
+\subsection{Legge di Ware-Amdahl}
 Si noti che $T(1)$ può essere scomposta in somma di operazioni parallelizzabili e non parallelizzabili, ovvero
 $$T(1)=T_s + T_c \iff 1=\frac{T_{s}}{T(1)} + \frac{T_{c}}{T(1)}$$
 dove $T_c$ è il numero di operazioni parallelizzabili. Definiamo 
@@ -149,7 +149,7 @@ Si noti che, per $p\to \infty$, si ha $S(p)\rightarrow \frac{1}{\alpha}$ e $E(p)
 
 Consideriamo lo speedup come una funzione in due variabili $S(n;p)$. Se $p$ è fissato e $n$ cresce, si osserva $\alpha\to 0$ e quindi $S(p)\to p$. Se $n$ è fissato e $p$ cresce, si osserva una crescita di $S(n;p)$ fino ad un punto $n_{0}$ a partire dal quale la funzione si stabilizza (e quindi l'efficienza inizia a degradare).
 
-\subsubsection{Legge di Ware-Amdahl generalizzata}
+\subsection{Legge di Ware-Amdahl generalizzata}
 Si può rendere la legge di Ware-Amdahl più precisa definendo un rapporto $\alpha$ per ogni passo temporale dell'algoritmo in cui lavorano un certo numero di processori sui $p$ disponibili, ovvero
 $$S(p) = \frac{1}{\alpha_1 + \frac{\alpha_2}{2} + ... + \frac{\alpha_p}{p}}$$
 dove $\alpha_i$ corrisponde al rapporto $\frac{T_{c,i}}{T(1)}$, dove $T_{c,i}$ è il numero di operazioni eseguite da esattamente $i$ processori.
@@ -158,7 +158,7 @@ dove $\alpha_i$ corrisponde al rapporto $\frac{T_{c,i}}{T(1)}$, dove $T_{c,i}$ �
   Un algoritmo si dice \keyword{fortemente scalabile} se, fissata la dimensione del problema, l'efficienza rimane costante all'aumentare del numero di processori. 
 \end{definition}
 
-\subsubsection{Speedup scalato}
+\subsection{Speedup scalato}
 Denotiamo con $T(p,n)$ il tempo impiegato per risolvere un problema di dimensione $n$ con $p$ processori. Notiamo, per la seconda strategia della somma di $n$ numeri, che: 
 \begin{itemize}
   \item se fissiamo $p$ e aumentiamo $n$, il valore di $\alpha$ scende fino a convergere a $0$, per cui lo speedup raggiunge il valore ideale;
@@ -183,7 +183,7 @@ Si definisce \keyword{efficienza scalata} la quantità
 $$ES(p,n) := \frac{SS(p,n)}{p} = \frac{T(1,n)}{T(p,np)}$$
 \end{definition}
 
-\subsubsection{Legge di Gustafson}
+\subsection{Legge di Gustafson}
 Con lo stesso ragionamento che porta alla legge di Ware-Amdahl, consideriamo $$T(p) = T_s + T_c^{'}$$
 con $T_c^{'} = \frac{T_c}{p}$, ovvero il numero di operazioni eseguite in parallelo da $p$ processori.
 
@@ -197,7 +197,7 @@ A differenza della legge di Ware-Amdahl, che considerava la dimensione del probl
 Un algoritmo si dice \keyword{debolmente scalabile} se la sua efficienza rimane costante all'aumentare congiunto di $n$ e $p$.
 \end{definition}
 
-\subsubsection{Isoefficienza}
+\subsection{Isoefficienza}
 L'\keyword{isoefficienza} è un'equazione che permette di calcolare come mantenere costante l'efficienza di un algoritmo. In altre parole, a partire da $n_{0}$ e $p_{0}$, come aumentare $n_{1}$ per mantenere invariata l'efficienza con $p_{1}$ processori?
 
 $$\begin{aligned}
@@ -206,7 +206,7 @@ E(p_{0},n_{0})&=E(p_{1},n_{1}), \\
 \frac{O_{h}(n_{0},p_{0})}{T(1,n_{0})} &= \frac{O_{h}(n_{1},p_{1})}{T(1,n_{1})}
 \end{aligned}$$
 
-\subsubsection{Tempo di comunicazione}
+\subsection{Tempo di comunicazione}
 Consideriamo, adesso, il costo non trascurabile della comunicazione tra i processori. Il tempo per effettuare una singola comunicazione è denotato con $t_{\text{com}}$. In media, si osserva $\frac{1 t_{com}}{1 t_{calc}} = 10^3$. Il tempo di esecuzione di un algoritmo parallelo va infatti calcolato come somma dei tempi di calcolo e dei tempi di comunicazione, ovvero
 $$T^{\text{time}}=T_{\text{com}}+T_{\text{calc}}$$
 Si definisce \keyword{overhead di comunicazione} il rapporto
