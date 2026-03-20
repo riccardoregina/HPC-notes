@@ -52,15 +52,7 @@ HPC-notes/
 
 ## Come contribuire
 
-Contributi, correzioni e miglioramenti sono benvenuti. Per contribuire:
-
-1. Fare fork della repository
-2. Creare un branch per le modifiche (`git checkout -b feature/miglioramento`)
-3. Committare le modifiche (`git commit -m 'Descrizione modifiche'`)
-4. Push del branch (`git push origin feature/miglioramento`)
-5. Aprire una Pull Request
-
-Per segnalare errori o problemi, aprire una issue dettagliando il problema riscontrato.
+Contributi, correzioni e miglioramenti sono benvenuti. Per contribuire, creare un fork di questo repository ed aprire una Pull Request. Per segnalare errori o problemi, aprire una issue dettagliando il problema riscontrato.
 
 ## Autori
 
