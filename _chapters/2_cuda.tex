@@ -1,0 +1,51 @@
+\chapter{GPU, CUDA}
+Le GPU (Graphics Processing Units) emergono alla fine degli anni '90 come hardware specializzato per il rendering grafico 3D, in risposta a una necessità critica: la CPU non era in grado di gestire in modo efficiente il carico computazionale richiesto dalle applicazioni grafiche real-time (videogiochi, animazioni, simulazioni visive).
+Nel 1999, NVIDIA rilascia sul mercato la GeForce 256, pubblicizzandola per la prima volta come \q{GPU}, sottolineando la sua capacità di accelerare le operazioni grafiche senza coinvolgere la CPU. 
+Per l'HPC, il vero salto avviene con l'introduzione delle GPGPU (General-Purpose GPU), che trasformano le GPU da acceleratori grafici a processori paralleli universali.
+Nel 2006, NVIDIA lancia CUDA (Compute Unified Device Architecture), un framework C/C++ per la programmazione parallela su GPU, dando definitivamente il via all'utilizzo general purpose delle GPU. 
+Nel 2007, AMD risponde con il lancio del framework ATI Stream\footnote{Ad oggi, AMD sviluppa il framework proprietario ROCm}. 
+Tuttavia, sia CUDA che ATI Stream erano framework proprietari e per giunta funzionanti solo sulle GPU di, rispettivamente, NVIDIA e AMD.
+Con lo scopo di definire un framework interoperabile, nel 2009, Khronos Group rilascia la specifica OpenCL.
+Tuttavia, NVIDIA depreca OpenCL nel 2017 e AMD sposta la sua attenzione su ROCm a partire dal 2016. 
+Allora, il Khronos Group rilascia, nel 2018, una nuova specifica, SYCL, inizialmente nata come estensione di OpenCL, che permette di unificare il codice per CPU e GPU in modo più naturale rispetto ai framework precedenti e che sta trovando crescente supporto da parte dei principali produttori hardware, tra cui NVIDIA (con DPC++), AMD (con hipSYCL), e Intel (con Intel oneAPI), che stanno adottando SYCL come standard per il calcolo parallelo moderno.
+Allo stato attuale, però, CUDA garantisce ancora le migliori performance su hardware NVIDIA, grazie a decenni di ottimizzazioni e a un ecosistema maturo.
+
+\begin{note}{Terminologia}
+Una GPU è comunemente chiamata \keyword{acceleratore} o \keyword{device} poiché comunemente utilizzata per accelerare calcoli \q{molto paralleli} che la CPU soddisferebbe in modo poco efficiente.
+\end{note}
+
+\section{Architettura CUDA}
+CUDA è un'architettura ibrida che presenta tre livelli di parallelismo. Il primo, macroscopico, prevede la presenza di $p$ core, chiamati MP, che condividono una cache ed una memoria. Quindi, a questo livello macroscopico, l'architettura è MIMD Shared Memory. Il secondo livello, intermedio, prevede che ciascun core MP sia un calcolatore SIMD dotato di $Q$ \keyword{CUDA cores}. Ciascun MP ha una memoria condivisa locale e ciascun CUDA core è dotato di una memoria locale privata. Ciascun MP, essendo SIMD, gestisce un tipo di operazione alla volta, poiché ha una sola unità di controllo.
+
+\begin{observation}{}
+Nella classica architettura SIMD, un \texttt{if-else} viene eseguito in modo sequenziale: il primo ramo viene eseguito da tutte le ALU che devono eseguire tale ramo, mentre le altre ALU aspettano; il secondo ramo viene eseguito dopo il primo dalle ALU che devono eseguire tale ramo, mentre le altre ALU aspettano. 
+Ciascuno dei $Q$ CUDA cores è in realtà un processore minimale con capacità di branching, che, in presenza di un \texttt{if-else}, consente l'esecuzione simultanea dei due rami, senza che nessun CUDA core debba aspettare.
+La capacità di branching, di fatto, permette di eseguire in modo indipendente un thread, a patto che il codice da eseguire sia identico al codice gestito dall'unità di controllo dell'MP di cui fa parte.
+Infatti, ciascun MP è detto SIMT (Single Instruction stream Multiple Threads).
+\end{observation}
+
+L'ultimo livello di parallelismo prevede che ciascun CUDA core implementi una pipeline. La CU di un MP impiega $k$ cicli macchina per la decodifica di un'operazione, mentre un CUDA core solo $1$. Definiamo $r$ la latenza il numero di cicli necessari ad un CUDA core per andare a regime.
+
+\begin{note}{}
+Si assume $k<r$, altrimenti la pipeline non potrebbe mai andare a regime.
+\end{note}
+
+In questa situazione, invece di far eseguire ad un CUDA core una sola operazione per $k$ cicli, la stessa operazione, ovviamente su dati diversi, viene eseguita $k$ volte, da $k$ thread diversi. Quindi, su ciascun CUDA core è possibil eseguire $k$ thread. Poiché una MP ha $Q$ CUDA cores, su ciascuna MP è possibile eseguire $k\cdot Q:=\dim W$ thread, dove $W$, detto \keyword{warp}, è l'insieme dei thread eseguiti su una singola MP. L'intera macchina possiede $p$ processori MP, per cui essa può eseguire contemporaneamente $p\cdot \dim W$ thread.
+
+\begin{note}{}
+Il valore $\dim W$ è, di fatto, il minimo numero di thread che ha senso lanciare su un processore MP per sfruttare il suo parallelismo. Essendo un processore MP una macchina SIMD, anche lanciando meno thread, essa comunque farà uso di tutti i suoi CUDA cores. Pertanto, lanciando meno di $\dim W$ thread, non solo non si sfrutterà appieno il parallelismo, ma non sarà possibile nemmeno risparmiare energia.
+\end{note}
+
+
+\begin{figure}[h]
+\centering
+\includegraphics[width=0.8\textwidth]{../_files/_images/cuda-arch.png}
+\caption{Lo schema architetturale CUDA, ricavato dal white paper di NVIDIA e confermato da test empirici. Le "ALU" indicano i CUDA cores.}
+\label{fig:cuda-arch}
+\end{figure}
+
+Quindi, il tempo di esecuzione ideale di una GPU su un problema di dimensione $n$ è 
+$$T_{GPU}(n)= \frac{T(n)}{p\cdot Q \cdot k} t_{calc}$$
+dove $T(n)$ è il numero di operazione per risolvere il problema di dimensione $n$ e $t_{calc}$ è il tempo per eseguire una floating point operation (flop).
+Idealmente, si dovrebbe avere $S_{\text{GPU}}(n)=\frac{T(n)}{T_{\text{GPU}}(n)}=p\cdot\dim W$. Tuttavia, a $T_{\text{GPU}}(n)$ va aggiunto il tempo di accesso alla memoria, $T_{mem}(n)$, che è capace di far degradare lo speedup. Però, aumentando sia il numero di thread che la dimensione del problema, si osserva che $T_{mem}$ impatta sempre di meno sul tempo di esecuzione totale, $T_{\text{GPU}}$, portando a speedup migliori. Questa strategia per ridurre l'overhead è analoga a quella vista per l'overhead di comunicazione nel precedente capitolo.
+Con le GPU, si ragiona tipicamente per scalabilità debole.
