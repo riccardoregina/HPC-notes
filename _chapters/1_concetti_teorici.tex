@@ -1,22 +1,23 @@
 \chapter{Concetti teorici}
 Nell'approccio all'algoritmica e, in generale, alla programmazione, ci si concentra sempre sulla ricerca dell'algoritmo ottimo per la risoluzione di un problema. 
 La Teoria della Complessità assume che l'esecutore della soluzione sia uno. 
-Soprattutto, quest'ultima si concentra sul numero di operazioni necessarie alla risoluzione il problema dato. 
-Tuttavia, sfruttando il concetto di parallelismo, è possibile ridurre il tempo effettivo di esecuzione, proprio in termini di secondi o sotto suoi multipli, nella risoluzione di un problema. 
+Soprattutto, quest'ultima si concentra sul numero di operazioni necessarie alla risoluzione del problema dato. 
+Tuttavia, sfruttando il concetto di parallelismo, è possibile ridurre il tempo effettivo di esecuzione, proprio in termini di secondi o sottomultipli, nella risoluzione di un problema. 
 Bisogna sin da subito notare che il parallelismo permette di eseguire una soluzione più velocemente, non di effettuare meno operazioni. Anzi, vedremo che, per sfruttare il parallelismo, saranno sovente richieste addirittura più operazioni.
 
 \section{Parallelismo}
 Il parallelismo consente di affrontare simultaneamente i sottoproblemi più piccoli di un problema. Ciò avviene introducendo più esecutori paralleli. 
-Il parallelismo è un concetto che esiste anche solo teoricamente: un problema può essere analizzato in un ambiente teorico parallelo in via totalmente teorica, permettendo la valutazione di un algoritmo parallelo e il suo confronto con altre soluzioni prima di spostarsi su macchine reali.
+Il parallelismo è un concetto che esiste anche solo teoricamente: un algoritmo parallelo, esattamente come accade per gli algoritmi classici, può essere valutato in via totalmente teorica, senza impiegare macchine reali. 
+Ciò è di fondamentale importanza in fase di progettazione.
 Detto questo, esistono tre tipi di parallelismo:
 \begin{itemize}
   \item \keyword{Parallelismo temporale}, anche chiamato pipeline (in italiano, catena di montaggio): operazioni diverse sullo stesso flusso di oggetti vengono eseguite da esecutori diversi, contemporaneamente. Il prodotto di una fase è usato come punto di partenza per la fase successiva;
-  \item Parallelismo spaziale: la stessa operazione viene eseguita più volte, contemporaneamente, su più flussi di oggetti;
-  \item Parallelismo asincrono: opreazioni diverse su flussi di oggetti diversi vengono eseguiti da esecutori diversi.
+  \item \keyword{Parallelismo spaziale}: la stessa operazione viene eseguita più volte, contemporaneamente, su più flussi di oggetti;
+  \item \keyword{Parallelismo asincrono}: operazioni diverse su flussi di oggetti diversi vengono eseguiti da esecutori diversi.
 \end{itemize}
 
 In termini di calcolatori classici, un processore completo (CPU) è composto da una \textit{control unit} (CU), che decodifica le operazioni i.e. moltiplicazioni, somme, etc. scomponendo queste ultime in istruzioni elementari, ed una ALU, che esegue tali istruzioni elementari. 
-Una CU decodifica uno \textit{stream} di istruzioni, mentre una ALU gestisce uno \textit{stream} di dati. Possiamo implementari tutti i tre tipi di parallelismo mediante un insieme di CPU e ALU.
+Una CU decodifica uno \textit{stream} di istruzioni, mentre una ALU gestisce uno \textit{stream} di dati. Possiamo implementare tutti i tre tipi di parallelismo mediante un insieme di CPU e ALU.
 Il parallelismo temporale può essere implementato con una sola CU e più ALU, oppure con una sola ALU che abbia capacità di pipelining. Il parallelismo spaziale può essere implementato mediante una sola CU e tante ALU. Il parallelismo asincrono può essere implementato con più CPU. 
 Sebbene quelle descritte non siano le uniche implementazioni possibili, esse sono sicuramente quelle minimali, ovvero quelle configurazioni di CPU e ALU strettamente necessarie per implementare il particolare tipo di parallelismo.
 
@@ -34,7 +35,7 @@ La tassonomia di Flynn è un modello di classificazione delle architetture dei c
 Nell'articolo in cui viene presentata la tassonomia, Flynn parla di Instruction stream, non di singola istruzione, e di Data stream, non di singolo dato. In questo contesto, la famiglia MISD assume senso: su un singolo stream di dati, vengono applicati tanti stream di istruzioni, intese come istruzioni aritmetiche. Pertanto, una macchina MISD prevede una singola CU ma con un ALU con capacità pipelining.
 \end{note}
 
-Sebbene la tassonomia di Flynn sia a fondamento della classificazione dei calcolatori, nel tempo si è passati sempre di più ad architetture ibride ed eterogenee. Si parla di \keyword{architettura ibrida} quando presenta più livelli di parallelismo, in cui i livelli appartengono a famiglie distinte di calcolatori parallali secondo la tassonomia di Flynn.
+Sebbene la tassonomia di Flynn sia a fondamento della classificazione dei calcolatori, nel tempo si è passati sempre di più ad architetture ibride ed eterogenee. Si parla di \keyword{architettura ibrida} quando essa presenta più livelli di parallelismo, in cui i livelli appartengono a famiglie distinte di calcolatori paralleli secondo la tassonomia di Flynn.
 Si parla di \keyword{architettura eterogenea} quando, allo stesso livello architetturale, essa è composta da calcolatori appartenenti a famiglie diverse della tassonomia. Ad esempio un qualsiasi computer odierno è dotato di una CPU e di una GPU, che, pur essendo calcolatori di natura molto diversa, collaborano al primo livello dell'architettura.
 Quest'ultimo è anche un esempio di architettura ibrida: una CPU è composta da vari core indipendenti collegati alla stessa memoria (MIMD-SM) e, all'interno di ciascun core, sono presenti unità di calcolo con capacità di pipelining (MISD).
 Con il tempo, la tassonomia di Flynn è stata sottoposta all'aggiunta di nuove sottoclassi. Ad esempio, nella famiglia MIMD Shared Memory, si sono sviluppate due sottoclassi: SymmetricMultiProcessor (SMP) e ASymmetricMultiProcessor (ASMP).
@@ -50,7 +51,7 @@ Per prima cosa, possiamo distribuire gli $n$ addendi tra i $4$ nodi, cosicchè c
 Completata la distribuzione, ciascun nodo calcola la propria somma parziale. 
 
 \begin{note}{}
-  Si noti che il numero di operazioni effettuate è $(\frac{n}{4} - 1)\cdot 4$, a cui bisogna, però, aggiungere il costo di distribuzione dei dati per calcolare in modo corretto il tempo di esecuzione. Tali operazioni vengono effettuate **contemporaneamente**.
+  Si noti che il numero di operazioni effettuate è $(\frac{n}{4} - 1)\cdot 4$, a cui bisogna, però, aggiungere il costo di distribuzione dei dati per calcolare in modo corretto il tempo di esecuzione. Tali operazioni vengono effettuate \textbf{contemporaneamente}.
 \end{note}
 
 A questo punto, dobbiamo elaborare una strategia per calcolare la somma totale a partire da quelle parziali. È necessario lo scambio dei dati (\keyword{message passing}) tra i nodi:
@@ -64,7 +65,7 @@ Le $2$ operazioni del primo passo avvengono in parallelo, mentre l'unica operazi
 Nella terza strategia, vengono effettuate $4$ operazioni al primo passo, $4$ al secondo e $4$ al terzo. Tutte le operazioni avvengono in parallelo.
 
 \begin{note}
-  La terza strategia potrebbe un'inutile complicazione della seconda: perché effettuare più calcoli solo per avere il risultato finale in tutti i nodi? Cerchiamo di rispondere enumerando i vantaggi di questo approccio:
+  Si potrebbe pensare che la terza strategia sia un'inutile complicazione della seconda: perché effettuare più calcoli solo per avere il risultato finale in tutti i nodi? Cerchiamo di rispondere citando i vantaggi di questo approccio:
   \begin{enumerate}
     \item poiché i nodi devono essere sincronizzati, non c'è alcun vantaggio nel far riposare un nodo durante il calcolo, a meno che non sia strettamente necessario liberare quanto prima i nodi. Insomma, facendo lavorare di più tutti i nodi, si sfrutta meglio la potenza computazionale a disposizione;
     \item avere il risultato finale in tutti i nodi può essere utile se si vuole utilizzare tale risultato su ciascuno di quei nodi;
@@ -134,7 +135,7 @@ Le operazioni parallelizzabili possono essere eseguite da $p$ processori, per cu
 Combinando le precedenti uguaglianze, si ottiene $$T(p)=T(1)\cdot\left(\alpha+\frac{{1-\alpha}}{p}\right)=T(1)\cdot\left( \frac{{\alpha(p-1)+1}}{p} \right)$$
 Pertanto, lo speedup può essere espresso in termini di $\alpha$:
 $$S(p)=\frac{T(1)}{T(p)}=\frac{p}{\alpha(p-1)+1}=\frac{1}{\alpha + \frac{1-\alpha}{p}}$$
-e questa espressione è chiamata **legge di Ware-Amdahl**. A questo punto, l'efficienza è espressa come
+e questa espressione è chiamata \keyword{legge di Ware-Amdahl}. A questo punto, l'efficienza è espressa come
 $$E(p)=\frac{S(p)}{p}=\frac{1}{\alpha(p-1)+1}$$
 
 Si noti che, per $p\to \infty$, si ha $S(p)\rightarrow \frac{1}{\alpha}$ e $E(p)\to 0$. Infatti, anche intuitivamente, meno sono le operazioni sequenziali e più è alto il valore dello speedup. Inoltre, da un certo punto in poi, fissata la dimensione del problema, più si aumentano i processori e più l'efficienza degrada.
@@ -154,7 +155,7 @@ $$S(p) = \frac{1}{\alpha_1 + \frac{\alpha_2}{2} + ... + \frac{\alpha_p}{p}}$$
 dove $\alpha_i$ corrisponde al rapporto $\frac{T_{c,i}}{T(1)}$, dove $T_{c,i}$ è il numero di operazioni eseguite da esattamente $i$ processori.
 
 \begin{definition}{Scalabilità forte}
-  Un algoritmo si dice **fortemente scalabile** se, fissata la dimensione del problema, l'efficienza rimane costante all'aumentare del numero di processori. 
+  Un algoritmo si dice \keyword{fortemente scalabile} se, fissata la dimensione del problema, l'efficienza rimane costante all'aumentare del numero di processori. 
 \end{definition}
 
 \subsubsection{Speedup scalato}
@@ -178,7 +179,7 @@ dove si assume che $T(1,np) = pT(1,n)$.
 Analogamente, definiamo l'efficienza scalata.
 
 \begin{definition}{Efficienza scalata}
-Si definisce **efficienza scalata** la quantità
+Si definisce \keyword{efficienza scalata} la quantità
 $$ES(p,n) := \frac{SS(p,n)}{p} = \frac{T(1,n)}{T(p,np)}$$
 \end{definition}
 
@@ -188,7 +189,7 @@ con $T_c^{'} = \frac{T_c}{p}$, ovvero il numero di operazioni eseguite in parall
 
 Ponendo il tempo $T(p)$ unitario, si ottiene 
 $$T(p) = T_s + T_c^{'} = 1 \iff T_c^{'} = 1 - T_s$$
-e quindi $T(1) = T_s + p(1-T_s)$. Infine, ponendo $T_s = \alpha^{'}$, si ottiene la **legge di Gustafson**:
+e quindi $T(1) = T_s + p(1-T_s)$. Infine, ponendo $T_s = \alpha^{'}$, si ottiene la \keyword{legge di Gustafson}:
 $$SS(p) = \frac{T(1)}{T(p)} = \frac{\alpha^{'} + p(1-\alpha^{'})}{1} = p+(1-p)\alpha^{'}$$
 A differenza della legge di Ware-Amdahl, che considerava la dimensione del problema come un parametro fissato, la legge di Gustafson ci dice che lo speedup scalato di un algoritmo si avvicina al valore perfetto, $p$, quando $\alpha'$ si avvicina a $0$ e ciò avviene al crescere delle operazioni totali, di cui si assume che solo una parte minore sia non parallelizzabile.
 
