@@ -15,7 +15,7 @@ Una GPU è comunemente chiamata \keyword{acceleratore} o \keyword{device} poich�
 \end{note}
 
 \section{Architettura CUDA}
-CUDA è un'architettura ibrida che presenta tre livelli di parallelismo. Il primo, macroscopico, prevede la presenza di $p$ core, chiamati MP, che condividono una cache ed una memoria. Quindi, a questo livello macroscopico, l'architettura è MIMD Shared Memory. Il secondo livello, intermedio, prevede che ciascun core MP sia un calcolatore SIMD dotato di $Q$ \keyword{CUDA cores}. Ciascun MP ha una memoria condivisa locale e ciascun CUDA core è dotato di una memoria locale privata. Ciascun MP, essendo SIMD, gestisce un tipo di operazione alla volta, poiché ha una sola unità di controllo.
+CUDA è un'architettura ibrida che presenta tre livelli di parallelismo. Il primo, macroscopico, prevede la presenza di $p$ \keyword{Streaming Multiprocessor} (MP), che condividono una cache ed una memoria. Quindi, a questo livello macroscopico, l'architettura è MIMD Shared Memory. Il secondo livello, intermedio, prevede che ciascun MP sia un calcolatore SIMD dotato di $Q$ \keyword{CUDA cores}. Ciascun MP ha una memoria condivisa locale e ciascun CUDA core è dotato di una memoria locale privata. Ciascun MP, essendo SIMD, gestisce un tipo di operazione alla volta, poiché ha una sola unità di controllo.
 
 \begin{observation}{}
 Nella classica architettura SIMD, un \texttt{if-else} viene eseguito in modo sequenziale: il primo ramo viene eseguito da tutte le ALU che devono eseguire tale ramo, mentre le altre ALU aspettano; il secondo ramo viene eseguito dopo il primo dalle ALU che devono eseguire tale ramo, mentre le altre ALU aspettano. 
@@ -24,13 +24,13 @@ La capacità di branching, di fatto, permette di eseguire in modo indipendente u
 Infatti, ciascun MP è detto SIMT (Single Instruction stream Multiple Threads).
 \end{observation}
 
-L'ultimo livello di parallelismo prevede che ciascun CUDA core implementi una pipeline. La CU di un MP impiega $k$ cicli macchina per la decodifica di un'operazione, mentre un CUDA core solo $1$. Definiamo $r$ la latenza il numero di cicli necessari ad un CUDA core per andare a regime.
+L'ultimo livello di parallelismo prevede che ciascun CUDA core implementi una pipeline. La CU di un MP impiega $k$ cicli macchina per la decodifica di un'operazione, mentre un CUDA core solo $1$. Definiamo $r$ il numero di cicli necessari alla pipeline di un CUDA core per andare a regime.
 
 \begin{note}{}
-Si assume $k<r$, altrimenti la pipeline non potrebbe mai andare a regime.
+Si assume $k<r$, altrimenti la pipeline di un CUDA core non potrebbe mai andare a regime.
 \end{note}
 
-In questa situazione, invece di far eseguire ad un CUDA core una sola operazione per $k$ cicli, la stessa operazione, ovviamente su dati diversi, viene eseguita $k$ volte, da $k$ thread diversi. Quindi, su ciascun CUDA core è possibil eseguire $k$ thread. Poiché una MP ha $Q$ CUDA cores, su ciascuna MP è possibile eseguire $k\cdot Q:=\dim W$ thread, dove $W$, detto \keyword{warp}, è l'insieme dei thread eseguiti su una singola MP. L'intera macchina possiede $p$ processori MP, per cui essa può eseguire contemporaneamente $p\cdot \dim W$ thread.
+In questa situazione, invece di far eseguire ad un CUDA core una sola operazione per $k$ cicli, la stessa operazione, ovviamente su dati diversi, viene eseguita $k$ volte, da $k$ thread diversi. Quindi, su ciascun CUDA core è possibil eseguire $k$ thread. Poiché una MP ha $Q$ CUDA cores, su ciascuna MP è possibile eseguire $k\cdot Q=:\dim W$ thread, dove $W$, detto \keyword{warp}, è l'insieme dei thread eseguiti su una singola MP. L'intera macchina possiede $p$ processori MP, per cui essa può eseguire contemporaneamente $p\cdot \dim W$ thread.
 
 \begin{note}{}
 Il valore $\dim W$ è, di fatto, il minimo numero di thread che ha senso lanciare su un processore MP per sfruttare il suo parallelismo. Essendo un processore MP una macchina SIMD, anche lanciando meno thread, essa comunque farà uso di tutti i suoi CUDA cores. Pertanto, lanciando meno di $\dim W$ thread, non solo non si sfrutterà appieno il parallelismo, ma non sarà possibile nemmeno risparmiare energia.
