@@ -56,14 +56,17 @@ La CPU tiene le redini del flusso logico del programma e, quando opportuno, fa u
 Per questo motivo, la CPU è chiamata \keyword{host} e la GPU, invece, \keyword{device}.
 
 \subsection{Concetti}
-Nel framework CUDA, si lavora con un'astrazione dell'architettura descritta nella sezione precedente.
-Infatti, in tale astrazione, ciascun CUDA core esegue un \keyword{thread}, ciascun SM esegue un \keyword{thread block}, ovvero un gruppo di thread, e l'intera GPU esegue una \keyword{grid}, ovvero un gruppo di thread block.
-Sia una grid che un thread block sono tensori tridimensionali.
+Nel framework CUDA, si lavora con un'astrazione dell'architettura descritta nella sezione precedente: ciascun CUDA core esegue un \keyword{thread}, ciascun SM esegue un \keyword{thread block} (blocco), ovvero un gruppo di thread, e l'intera GPU esegue una \keyword{grid} (griglia), ovvero un gruppo di blocchi.
+Sia una griglia che un blocco sono tensori tridimensionali.
 Ciò permette di definire una topologia secondo lo schema scelto per la suddivisione del calcolo.
-All'interno di un grid, tutti i thread block devono avere la stessa forma, ovvero le stesse dimensioni, per consentire l'indirizzamento a tempo costante e memoria zero.\footnote{Altrimenti, bisognerebbe conservare, per ogni block, la sua forma, ed effettuare calcoli complessi per ricavare un indice globale per ciascun thread.}
-I thread all'interno di ciascun thread block sono raggruppati in \keyword{warp}.
-La dimensione di un warp è stabilmente \(32\) dalla Compute Capability \(1.0\)\footnote{La Compute Capability è un numero di versione che indica le caratteristiche, le specifiche e l'instruction set supportato da una specifica architettura CUDA. Conoscere la Compute Capability del device a disposizione è cruciale per l'ottimizzazione dei kernel su di esso.}.
-I thread di un warp eseguono in \keyword{lockstep}\footnote{In realtà, a partire dalla Compute Capability \(7.0\), ciò non è più vero. È possibile, in tali device, lo scheduling asincrono dei thread.}, ovvero eseguono in modo sincronizzato, secondo la specifica SIMT, di cui abbiamo precedentemente parlato.
+All'interno di una griglia, tutti i blocchi devono avere la stessa forma, ovvero le stesse dimensioni, per consentire l'indirizzamento a tempo costante e memoria zero.\footnote{Altrimenti, bisognerebbe conservare, per ogni blocco, la sua forma, ed effettuare calcoli complessi per ricavare un indice globale per ciascun thread.}
+I thread all'interno di ciascun blocco sono raggruppati in \keyword{warp}.
+La dimensione di un warp è stabilmente \(32\) dalla Compute Capability \(1.0\)\footnote{La Compute Capability è un numero di versione che indica le caratteristiche, le specifiche e l'instruction set supportato da una specifica architettura CUDA. Conoscere la Compute Capability del device a disposizione è cruciale per l'ottimizzazione degli algoritmi su di esso.}.
+I thread di un warp eseguono in \keyword{lockstep}\footnote{In realtà, a partire dalla Compute Capability \(7.0\), ciò non è più vero. È possibile, in tali device, lo scheduling asincrono di thread dello stesso warp.}, ovvero eseguono in modo sincronizzato, secondo la specifica SIMT, di cui abbiamo precedentemente parlato.
+
+\begin{observation}{Curiosità}
+    La traduzione di \textit{thread} in italiano è \textit{filo}, mentre quella di \textit{warp} è \textit{ordito}, ossia l'insieme dei fili tesi sul telaio che si intrecciano con la trama.
+\end{observation}
 
 \subsection{Kernel, funzioni}
 Un \keyword{kernel} è una funzione invocata dall'host ed eseguita sul device. Un kernel è eseguito da una griglia di thread. Tutti i thread della griglia eseguono il kernel.
@@ -76,10 +79,10 @@ __global__ void kernel_name(arguments) {
 \end{lstlisting}
 
 In CUDA, ogni funzione ha uno scope in termini di invocazione ed esecuzione rispetto a host e device.
-Una funzione \texttt{\_\_global}, può essere invocata solo dall'host ed esegue sul device.
-Una funzione \texttt{\_\_device\_\_} può essere invocata solo dal device ed esegue sul device.
-Una funzione \texttt{\_\_host\_\_} può essere invocata solo dall'host e esegue sull'host.
-Se non specificato lo scope, una funzione ha scope \texttt{\_\_host\_\_}.
+Una funzione \texttt{\_\_global} può essere invocata solo dall'host ed eseguita sul device.
+Una funzione \texttt{\_\_device\_\_} può essere invocata solo dal device ed eseguita sul device.
+Una funzione \texttt{\_\_host\_\_} può essere invocata solo dall'host ed eseguita sull'host.
+Se non specificato, lo scope di una funzione è \texttt{\_\_host\_\_}.
 Una funzione \texttt{\_\_host\_\_ \_\_device\_\_} può essere invocata sia dall'host che dal device e può eseguire su entrambi.
 
 \begin{note}{}
@@ -99,9 +102,10 @@ Per comprendere la programmazione CUDA, risulta cruciale interessarsi della gera
 Come vedremo tra poco, vi è un mapping uno a uno tra la memoria descritta durante la presentazione dell'architettura CUDA e la memoria accessibile in un programma CUDA.
 
 \subsubsection{Memoria centrale}
-Per cominciare, la memoria centrale dell'host e la global memory della GPU sono separate ed è necessario un trasferimento di dati tra le due.
-Quindi, è necessaria un'allocazione esplicita sulla global memory.
-Tale allocazione è possibile, così come nel linguaggio C, in due modi: staticamente o dinamicamente.
+In CUDA, la memoria centrale dell'host e la global memory della GPU sono separate: è richiesto un trasferimento esplicito di dati tra le due.
+Di conseguenza, separata è anche l'allocazione delle due memorie.
+La memoria centrale dell'host è allocabile secondo le stesse modalità che i linguaggi C e C++ offrono, mentre la global memory richiede funzioni proprie del framework CUDA.
+Così come per la memoria centrale, l'allocazione della global memory può avvenire sia staticamente che dinamicamente.
 Una variabile allocata staticamente dev'essere dichiarata al di fuori di qualsiasi funzione e con la keyword \texttt{\_\_device\_\_}, omonima di quella applicata a funzioni.
 
 \begin{lstlisting}[language=C++, numbers=none]
@@ -176,7 +180,7 @@ In questo modo, non è necessario un trasferimento esplicito dei dati, poiché �
 
 \subsubsection{Shared memory}
 Nella programmazione CUDA, l'utilizzo della global memory andrebbe limitato al massimo, data la presenza di memorie molto più veloci, ovvero la shared memory e i registri dei CUDA cores.
-I thread all'interno dello stesso block possono accedere alla shared memory, che è generalmente di un ordine di grandezza più veloce della global memory per accesso e scrittura.
+I thread all'interno dello stesso blocco possono accedere alla shared memory, che è generalmente di un ordine di grandezza più veloce della global memory per accesso e scrittura.
 È possibile allocare memoria sulla shared memory sia staticamente che dinamicamente.
 Per allocare una variabile in modo statico, è possibile dichiararla, all'interno del kernel, con la keyword \texttt{\_\_shared\_\_}.
 
@@ -196,18 +200,18 @@ extern __shared__ shared_data[];
 \end{lstlisting}
 
 \begin{note}{}
-    \texttt{shared\_mem\_size} corrisponde alla dimensione della shared memory da allocare per tutti i block.
-    Ad esempio, se vogliamo che ogni block abbia a disposizione \texttt{size} byte, allora \texttt{shared\_mem\_size} dovrà essere uguale a \texttt{size} per il numero di block.
+    \texttt{shared\_mem\_size} corrisponde alla dimensione della shared memory da allocare per tutti i blocchi.
+    Ad esempio, se vogliamo che ogni blocco abbia a disposizione \texttt{size} byte, allora \texttt{shared\_mem\_size} dovrà essere uguale a \texttt{size} moltiplicato per il numero di blocchi.
 \end{note}
 
-%Cita https://feldmann.nyc/blog/smem-microbenchmarks
+%TODO: Cita https://feldmann.nyc/blog/smem-microbenchmarks
 Per consentire l'uso efficiente della shared memory da parte dei thread di un warp, essa è suddivisa in \(32\) \keyword{banchi} (o, banks).
 Ogni banco è una porzione di shared memory di \(4\) byte.
 Ciascun banco può effettuare lettura e scrittura in un singolo ciclo macchina.
 La suddivisione in banchi è circolare: premettendo che la shared memory è \textit{byte-addressed}\footnote{Una memoria è byte-addressed quando presenta un indirizzo di memoria per ogni suo byte.}, i suoi indirizzi sono suddivisi in banchi secondo la funzione \texttt{bank(addr) = (addr/4) \% 32}.
 Ciò significa che, dato un array in shared memory \texttt{\_\_shared\_\_ float s[64]}, gli elementi \texttt{s[0]}, \texttt{s[32]} appartengono allo stesso banco, gli elementi \texttt{s[1]}, \texttt{s[33]} appartengono al banco successivo e così via.
 
-Accessi allo stesso banco vengono serializzati, mentre accessi a banchi diversi possono avvenire simultaneamente.
+Accessi allo stesso banco vengono serializzati, mentre accessi a banchi diversi avvengono simultaneamente.
 Se tutti i thread devono leggere dallo stesso indirizzo dello stesso banco, allora il valore contenuto in tale indirizzo viene trasmesso simultaneamente ai thread richiedenti. Questa proprietà è chiamata \keyword{broadcasting}.
 Inoltre, la shared memory consente anche il \keyword{multicasting}, che consente più broadcasting simultanei.
 Ad esempio, sempre all'interno dello stesso warp, se un gruppo di thread, \(G_{1}\), vuole leggere il valore \texttt{s[0]} e un altro gruppo di thread, \(G_{2}\), vuole leggere il valore \texttt{s[1]}, allora \texttt{s[0]} viene trasmesso simultaneamente a tutti i thread di \(G_{1}\) e \texttt{s[1]} viene trasmesso simultaneamente a tutti i thread di \(G_{2}\).
