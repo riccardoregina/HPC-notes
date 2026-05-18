@@ -1,0 +1,631 @@
+\chapter{Programmazione CUDA}
+All'architettura descritta finora corrisponde un framework di programmazione, CUDA C/C++, costruito come estensione dei linguaggi C e C++ ed ideato per la scrittura di programmi eseguibili in ambienti eterogenei, ovvero in presenza di CPU e GPU.
+La CPU tiene le redini del flusso logico del programma e, quando opportuno, fa uso della GPU come acceleratore.
+Per questo motivo, la CPU è chiamata \keyword{host} e la GPU, invece, \keyword{device}.
+
+\section{Concetti}
+Nel framework CUDA, si lavora con un'astrazione dell'architettura descritta nella sezione precedente: ciascun CUDA core esegue un \keyword{thread}, ciascun SM esegue un \keyword{thread block} (blocco), ovvero un gruppo di thread, e l'intera GPU esegue una \keyword{grid} (griglia), ovvero un gruppo di blocchi.
+Sia una griglia che un blocco sono tensori tridimensionali.
+Ciò permette di definire una topologia secondo lo schema scelto per la suddivisione del calcolo.
+All'interno di una griglia, tutti i blocchi devono avere la stessa forma, ovvero le stesse dimensioni, per consentire l'indirizzamento a tempo costante e memoria zero.\footnote{Altrimenti, bisognerebbe conservare, per ogni blocco, la sua forma, ed effettuare calcoli complessi per ricavare un indice globale per ciascun thread.}
+I thread all'interno di ciascun blocco sono raggruppati in \keyword{warp}.
+La dimensione di un warp è stabilmente \(32\) dalla Compute Capability \(1.0\)\footnote{La Compute Capability è un numero di versione che indica le caratteristiche, le specifiche e l'instruction set supportato da una specifica architettura CUDA. Conoscere la Compute Capability del device a disposizione è cruciale per l'ottimizzazione degli algoritmi su di esso.}.
+I thread di un warp eseguono in \keyword{lockstep}\footnote{In realtà, a partire dalla Compute Capability \(7.0\), ciò non è più vero. È possibile, in tali device, lo scheduling asincrono di thread dello stesso warp.}, ovvero eseguono in modo sincronizzato, secondo la specifica SIMT, di cui abbiamo precedentemente parlato.
+
+\begin{observation}{Curiosità}
+    La traduzione di \textit{thread} in italiano è \textit{filo}, mentre quella di \textit{warp} è \textit{ordito}, ossia l'insieme dei fili tesi sul telaio che si intrecciano con la trama.
+\end{observation}
+
+Come vedremo, il framework CUDA spinge a ragionare a livello di warp.
+Infatti, all'interno di un warp, i thread possono cooperare in modo efficiente mediante i propri registri.
+Ciascun thread di un warp ha un indice chiamato \keyword{lane}, un numero nell'insieme \(\set{0, \ldots, \text{warpSize}}\).
+
+\section{Kernel, funzioni}
+Un \keyword{kernel} è una funzione invocata dall'host ed eseguita sul device. Un kernel è eseguito da una griglia di thread. Tutti i thread della griglia eseguono il kernel.
+Un kernel è una funzione \texttt{void}, con scope \texttt{\_\_global\_\_}.
+
+\begin{lstlisting}[language=C++, numbers=none]
+__global__ void kernel_name(arguments) {
+    // Kernel code executed by each thread.
+}
+\end{lstlisting}
+
+In CUDA, ogni funzione ha uno scope in termini di invocazione ed esecuzione rispetto a host e device.
+Una funzione \texttt{\_\_global} può essere invocata solo dall'host ed eseguita sul device.
+Una funzione \texttt{\_\_device\_\_} può essere invocata solo dal device ed eseguita sul device.
+Una funzione \texttt{\_\_host\_\_} può essere invocata solo dall'host ed eseguita sull'host.
+Se non specificato, lo scope di una funzione è \texttt{\_\_host\_\_}.
+Una funzione \texttt{\_\_host\_\_ \_\_device\_\_} può essere invocata sia dall'host che dal device e può eseguire su entrambi.
+
+\begin{note}{}
+    Nelle funzioni eseguibili su device, sono proibite la ricorsione, le variabili statiche, numero variabile di argomenti (funzioni variadiche).
+\end{note}
+
+Un kernel viene invocato dall'host specificando due parametri obbligatori (i primi) e due opzionali (gli ultimi).
+
+\begin{lstlisting}[language=C++, numbers=none]
+kernel_name<<<dim_grid, dim_block, shared_mem_size, stream>>>(arguments);
+\end{lstlisting}
+
+Per ora, ci concentreremo sui primi due: \texttt{dim\_grid} è la forma della griglia da eseguire, \texttt{dim\_block} è la forma di ciascun blocco.
+
+\section{Memoria}
+Per comprendere la programmazione CUDA, risulta cruciale interessarsi della gerarchia di memorie che l'architettura offre. 
+Come vedremo tra poco, vi è un mapping uno a uno tra la memoria descritta durante la presentazione dell'architettura CUDA e la memoria accessibile in un programma CUDA.
+
+\subsection{Memoria centrale}
+In CUDA, la memoria centrale dell'host e la global memory della GPU sono separate: è richiesto un trasferimento esplicito di dati tra le due.
+Di conseguenza, separata è anche l'allocazione delle due memorie.
+La memoria centrale dell'host è allocabile secondo le stesse modalità che i linguaggi C e C++ offrono, mentre la global memory richiede funzioni proprie del framework CUDA.
+Così come per la memoria centrale, l'allocazione della global memory può avvenire sia staticamente che dinamicamente.
+Una variabile allocata staticamente dev'essere dichiarata al di fuori di qualsiasi funzione e con la keyword \texttt{\_\_device\_\_}, omonima di quella applicata a funzioni.
+
+\begin{lstlisting}[language=C++, numbers=none]
+__device__ float array[1024];
+\end{lstlisting}
+
+Una variabile può essere allocata dinamicamente mediante le funzioni di allocazione di CUDA, di cui \texttt{cudaMalloc} è la più semplice.
+
+\begin{lstlisting}[language=C++, numbers=none]
+/*
+ * cudaError_t cudaMalloc(void **devPtr, size_t size)	
+ * 
+ * Parameters:
+ *  devPtr: pointer to allocated device memory
+ *  size: requested allocation size in bytes
+ *
+ * Returns:
+ *  cudaSuccess, cudaErrorMemoryAllocation
+ */
+
+float *array = NULL; 
+const uint size = 1024;
+cudaMalloc((void **) &array, size * sizeof(float));
+//[...]
+cudaFree(array);
+array = NULL;
+\end{lstlisting}
+
+%TODO: trasferimento da memoria centrale a global memory e viceversa
+Tipicamente, un kernel viene invocato per il calcolo di uno o più valori.
+Poiché un kernel è una funzione \texttt{void}, è necessario passare al kernel un puntatore alla variabile, che risiede sulla global memory, che conterrà il risultato.
+Per elaborare il risultato sull'host, occorre effettuare un trasferimento del dato dalla global memory alla memoria centrale dell'host.
+Il metodo di base per farlo è mediante la funzione \texttt{cudaMemcpy}.
+
+\begin{lstlisting}[language=C++, numbers=none]
+/*
+ * __host__ cudaError_t cudaMemcpy(
+ *      void *dst, const void *src, size_t count,
+ *      cudaMemcpyKind kind
+ * )
+ * 
+ * Parameters:
+ *  dst: destination memory address
+ *  src: source memory address
+ *  count: size in bytes to copy
+ *  kind: type of transfer:
+ *      cudaMemcpyHostToHost, cudaMemcpyHostToDevice,
+ *      cudaMemcpyDeviceToHost, cudaMemcpyDeviceToDevice,
+ *      cudaMemcpyDefault (for UnifiedMemory, we'll see it)
+ *
+ * Returns:
+ *  cudaSuccess, cudaErrorInvalidValue,
+ *  cudaErrorInvalidMemcpyDirection
+ */
+
+float *result, *result_dev;
+//[...]
+some_kernel<<<dim_grid, dim_block>>>(result_dev);
+//[...]
+cudaMemcpy(
+    result, result_dev, sizeof(float) * size,
+    cudaMemcpyDeviceToHost
+);
+\end{lstlisting}
+
+\begin{observation}{Unified Memory}
+%TODO: approfondimento
+Per device con Compute Capability \(\geq 6.0\), è possibile l'utilizzo della \keyword{unified memory}, ossia una memoria virtuale che unifica, appunto, la global memory con la memoria centrale dell'host.
+È possibile allocare una variabile in unified memory mediante la funzione \texttt{cudaMallocManaged}, che permette di allocare memoria accessibile sia dall'host che dal device.
+In questo modo, non è necessario un trasferimento esplicito dei dati, poiché è la unified memory a spostare i dati quando richiesto.
+\end{observation}
+
+\subsection{Shared memory}
+Nella programmazione CUDA, l'utilizzo della global memory andrebbe limitato al massimo, data la presenza di memorie molto più veloci, ovvero la shared memory e i registri dei CUDA cores.
+I thread all'interno dello stesso blocco possono accedere alla shared memory, che è generalmente di un ordine di grandezza più veloce della global memory per accesso e scrittura.
+È possibile allocare memoria sulla shared memory sia staticamente che dinamicamente.
+Per allocare una variabile in modo statico, è possibile dichiararla, all'interno del kernel, con la keyword \texttt{\_\_shared\_\_}.
+
+\begin{lstlisting}[language=C++, numbers=none]
+__shared__ float shared_data[1024];
+\end{lstlisting}
+
+Per allocare una variabile in modo dinamico, è necessario specificare la dimensione in byte della shared memory da allocare come terzo parametro di lancio del kernel.
+All'interno del kernel, è necessario dichiarare la variabile con \texttt{extern}, oltre che con \texttt{\_\_shared\_\_}, senza specificare la sua dimensione, che sarà stabilita a run time.
+
+\begin{lstlisting}[language=C++, numbers=none]
+//Inside invoker
+some_kernel<<<dim_grid, dim_block, shared_mem_size>>>(arguments);
+
+//Inside kernel
+extern __shared__ shared_data[];
+\end{lstlisting}
+
+\begin{note}{}
+    \texttt{shared\_mem\_size} corrisponde alla dimensione della shared memory da allocare per tutti i blocchi.
+    Ad esempio, se vogliamo che ogni blocco abbia a disposizione \texttt{size} byte, allora \texttt{shared\_mem\_size} dovrà essere uguale a \texttt{size} moltiplicato per il numero di blocchi.
+\end{note}
+
+\section{Un primo esempio: l'approssimazione del trapezio}
+Vediamo adesso un esempio di programmazione CUDA per familiarizzare con i concetti introdotti finora. 
+L'approssimazione del trapezio è un metodo di calcolo numerico atto all'approssimazione, appunto, di un integrale definito in un intervallo limitato.
+L'idea alla base è semplice: approssimare l'area sottesa dalla funzione \(f\) nell'intervallo \([a,b]\) con un trapezio rettangolo di altezza \(b-a\) e basi \(f(a)\), \(f(b)\), ovvero
+\[\int_{a}^{b}f(x)\,dx\approx \frac{b-a}{2}\cdot (f(a) + f(b)).\]
+
+L'approssimazione del trapezio, nella sua versione generalizzata, permette di ottenere un'approssimazione molto migliore.
+L'intervallo \([a,b]\) viene suddiviso in \(n\) sottointervalli, ciascuno dei quali sarà l'altezza di un piccolo trapezio rettangolo.
+La suddivisione avviene prendendo \(n+1\) punti \(a=x_0,x_1,\ldots, x_{n-1}, x_{n}=b\) a distanza \(\frac{b-a}{n}\) l'uno dall'altro. 
+A questo punto, l'integrale può essere approssimato mediante la formula
+\[\int_{a}^{b}f(x)\,dx\approx \frac{h}{2}\cdot\left[f(x_0)+2f(x_1)+\ldots+2f(x_{n-1})+f(x_n)\right].\]
+
+La correttezza del risultato, ovvero la differenza tra il risultato reale e quello calcolato, aumenta all'aumentare dei punti di suddivisione, fino a raggiungere il limite permesso dall'hardware utilizzato.
+Questo metodo si presta molto bene alla parallelizzazione mediante il device. 
+Infatti, possiamo creare un thread per ogni valutazione di funzione \(f(x_i)\) ed infine effettuare la somma dei contributi.
+Quest'ultima operazione potrà essere implementata in più modi ed è di cruciale importanza per le performance dell'algoritmo.
+
+Prima di procedere con l'implementazione dell'algoritmo parallelo, diamo un esempio del codice sequenziale.
+Nell'esempio considerato, si calcolerà l'integrale definito
+\[\int_{0}^{2\pi}x\cdot e^{-x} \cdot \cos 2x \,dx.\]
+
+\begin{lstlisting}[
+    language=C++, 
+    caption={La funzione \texttt{f} è invocabile sia dall'host (\texttt{\_\_host\_\_}) che dal device (\texttt{\_\_device\_\_}). In questo esempio, la funzione viene invocata dall'host.}
+]
+//trapezio.cu
+__host__ __device__ float f(float x) {
+    return x * expf(-x) * cosf(2.0f * x);
+}
+
+float Trap_Seq(float a, float b, int n) {
+    float h = (b - a) / n;
+    float somma = f(a) + f(b);
+    for (int i = 1; i < n; i++) {
+        float x_i = a + i * h;
+        somma += 2.0f * f(x_i);
+    }
+    return (h / 2.0f) * somma;
+}
+\end{lstlisting}
+
+Passiamo ora ad una prima implementazione parallela. Vogliamo che ciascun thread valuti la funzione nel punto punto ad esso assegnato.
+Dobbiamo calcolare \(2\cdot f(x_i), \forall i \in \set{1,\ldots,n-1}\) e \(f(x_i), \forall i \in \set{0, n}\) ed infine moltiplicare la somma totale per \(\frac{h}{2}\). 
+Quindi, per tutti i punti, eccetto che per i punti di frontiera, andrà calcolata la stessa formula.
+Per questo motivo, per non appesantire il kernel con un controllo sui punti di frontiera, eseguiremo la valutazione di funzione in questi ultimi sull'host ed il resto delle valutazioni sul device.
+
+Vogliamo disporre i thread in modo lineare, per ricalcare la topologia naturale del problema: i blocchi avranno dimensione \(32\times 1 \times 1\), ovvero conterranno (per semplicità) un solo warp srotolato lungo l'asse \(x\), e la griglia sarà composta da tanti blocchi quanti ne saranno necessari per il valore scelto per \(n\). Anche i blocchi all'interno della griglia saranno disposti lungo l'asse \(x\).
+
+In CUDA, ciascun thread di una griglia ha a disposizione le seguenti variabili:
+\begin{itemize} 
+    \item \texttt{gridDim.x}, \texttt{gridDim.y}, \texttt{gridDim.z}: le dimensioni della griglia;
+    \item \texttt{blockDim.x}, \texttt{blockDim.y}, \texttt{blockDim.z}: le dimensioni dei blocchi;
+    \item \texttt{blockIdx.x}, \texttt{blockIdx.y}, \texttt{blockIdx.z}: gli indici che identificano il blocco, a cui il thread appartiene, all'interno della griglia;
+    \item \texttt{threadIdx.x}, \texttt{threadIdx.y}, \texttt{threadIdx.z}: gli indici che identificano il thread all'interno del suo blocco.
+\end{itemize}
+Tali variabili forniscono a ciascun thread informazione sulla propria posizione e permettono al thread di calcolare un indice globale, che chiameremo \texttt{tid}.
+In un blocco, i thread sono ordinati in modo tale che l'indice \texttt{threadIdx.x} sia il più veloce, seguito da \texttt{threadIdx.y} e poi da \texttt{threadIdx.z}. Ad esempio, in un blocco di dimensione \(3\times 2\), i thread saranno linearizzati come \((0,0), (1,0), (2,0), (0, 1), (1,1), (2,1)\).
+
+\begin{lstlisting}[
+    language=C++, 
+    caption={Una prima implementazione parallela dell'approssimazione del trapezio.}
+]
+//trapezio.cu
+__global__ void Dev_trap_atomic(const float a, const float b, 
+                                const float h, const int n, 
+                                float* result_ptr) {
+    int tid = blockDim.x * blockIdx.x + threadIdx.x;
+    if (tid > 0 && tid < n) {
+        float x = a + tid * h;
+        float partial_result = f(x);
+        atomicAdd(result_ptr, partial_result); 
+    }
+}
+
+//main.cu
+#define INTERVAL_START 0.0f
+#define INTERVAL_END (2.0f * M_PI)
+#define EXPECTED_RESULT -0.12212260462f
+#define NUM_SUBDIVISIONS 16777216
+
+int main(void) {
+    float a = INTERVAL_START;
+    float b = INTERVAL_END;
+    int n = NUM_SUBDIVISIONS;
+    float h = (b - a) / n;
+
+    int blockSize = 32;
+    int numBlocks = (n + blockSize - 1) / blockSize;
+    
+    float* result_ptr;
+    cudaMallocManaged(&result_ptr, sizeof(float));
+
+    Dev_trap_atomic<<<numBlocks, 
+                      blockSize>>>(a, b, h, n, result_ptr);
+    cudaDeviceSynchronize();
+
+    printf("Error: %f\n", fabs(EXPECTED_RESULT - *result_ptr));
+    
+    cudaFree(result_ptr);
+    return 0;
+}
+\end{lstlisting}
+Ciascun kernel avente \texttt{tid} nell'insieme di indici \{1,\ldots, n-1\} calcolerà il suo contributo, che andrà aggiunto alla somma complessiva di tutti i thread.
+La somma è un'operazione di riduzione e, come tutte le operazioni di riduzione, non si presta bene al calcolo parallelo.
+Ciononostante, conviene comunque minimizzare i passi temporali per il suo calcolo, cosa che non avviene in questo primo esempio, in cui si fa uso di \texttt{atomicAdd}, che serializza totalmente la somma.
+In particolare, il numero di passi temporali per effettuarla coincide con il numero di thread, portando questa prima implementazione ad essere molto inefficiente.
+Si noti che si è utilizzato il trasferimento automatico della memoria con \texttt{cudaMallocManaged}.
+
+\begin{note}{}
+    L'istruzione di invocazione \texttt{Dev\_trap\_atomic<...} è solo una richiesta di esecuzione: il device eseguirà il kernel in base alla disponibilità delle sue risorse.
+    Ne segue che l'esecuzione della riga dell'invocazione è asincrona, ovvero il programma (\texttt{main.cu}) continuerà la sua esecuzione senza attendere l'esecuzione del kernel.
+    Per attendere la fine dell'esecuzione del kernel, è necessario invocare la funzione \texttt{cudaDeviceSynchronize}. 
+\end{note}
+L'espressione \texttt{numBlocks = (n + blockSize - 1) / blockSize} si assicura che si osservi \texttt{numBlocks = 0} se e solo se \texttt{n = 0}.
+
+Una seconda implementazione, ancora molto semplice, fa uso della shared memory per effettuare la somma dei contributi parziali al suo interno secondo uno schema ad albero.
+
+\begin{lstlisting}[
+    language=C++, 
+    caption={Una seconda implementazione parallela dell'approssimazione del trapezio. Questa versione riduce il numero di passi temporali per la riduzione finale sfruttando la shared memory.}
+]
+
+//trapezio.cu
+__device__ float Shared_mem_tree_sum(float* sdata) {
+    int tid = threadIdx.x;
+    for (int stride = blockDim.x / 2; stride > 0; stride /= 2) {
+        if (tid < stride) {
+            sdata[tid] += sdata[tid + stride];
+        }
+    }
+    return sdata[0];
+}
+
+__global__ void Dev_trap_shared_tree(const float a, const float b, 
+                                     const float h, const int n, 
+                                     float* result_ptr) {
+    extern __shared__ float sdata[];
+    int my_i = blockDim.x * blockIdx.x + threadIdx.x;
+    int tid = threadIdx.x;
+    sdata[tid] = (my_i > 0 && my_i < n) ? f(a + my_i * h) : 0.0f;
+    float block_sum = Shared_mem_tree_sum(sdata);
+    if (tid == 0) {
+        atomicAdd(result_ptr, block_sum);
+    }
+}
+
+//main.cu
+#define INTERVAL_START 0.0f
+#define INTERVAL_END (2.0f * M_PI)
+#define EXPECTED_RESULT -0.12212260462f
+#define NUM_SUBDIVISIONS 16777216
+
+int main(void) {
+    float a = INTERVAL_START;
+    float b = INTERVAL_END;
+    int n = NUM_SUBDIVISIONS;
+    float h = (b - a) / n;
+
+    int blockSize = 32;
+    int numBlocks = (n + blockSize - 1) / blockSize;
+    
+    float* result_ptr;
+    cudaMallocManaged(&result_ptr, sizeof(float));
+
+    Dev_trap_shared_tree<<<numBlocks, blockSize, 
+                        blockSize * sizeof(float)>>>(a, b, h, n, 
+                                                        result_ptr);
+    cudaDeviceSynchronize();
+
+    printf("Error: %f\n", fabs(EXPECTED_RESULT - *result_ptr));
+    
+    cudaFree(result_ptr);
+    return 0;
+}
+
+\end{lstlisting}
+In questa implementazione, facciamo uso di una funzione ausiliaria per il kernel, ovvero \texttt{Shared\_mem\_tree\_sum}, dichiarata infatti con lo scope \texttt{\_\_device\_\_}.
+Ciascun thread calcola il suo contributo. Successivamente, ciascun blocco (composto da un solo warp), calcola, all'interno della shared memory, la somma dei suoi thread.
+Le somme parziali dei blocchi vengono poi aggregate mediante \texttt{atomicAdd}.
+Si noti che anche l'ultima aggregazione potrebbe avvenire all'interno di una shared memory a scelta (se il numero di blocchi è inferiore o uguale alla dimensione di un blocco) o all'interno di più shared memory (altrimenti).
+
+\begin{note}{}
+    In questa seconda implementazione parallela, assumiamo \texttt{blockSize = 32}, ovvero che vi sia un warp per blocco.
+    Pertanto, ragionando secondo l'architettura CUDA che abbiamo presentato nel capitolo precedente, non vi sarebbe la necessità di sincronizzare i thread con l'istruzione \texttt{\_\_syncthread()}, poiché essi eseguono in lockstep all'interno dello stesso warp.
+    Tuttavia, a partire dalla Compute Capability 7.0, thread dello stesso warp possono essere schedulati in modo asincrono ed è pertanto necessario sincronizzarli con l'istruzione \texttt{\_\_syncwarp()}.
+    Per semplicità, le invocazioni di \texttt{\_\_syncwarp()} verranno omesse.
+\end{note}
+
+Sebbene la shared memory sia più veloce (di un ordine di grandezza) rispetto alla global memory, si può ulteriormente migliorare l'implementazione fornita finora facendo uso diretto dei registri dei thread all'interno dello stesso warp mediante funzioni come \texttt{\_\_shfl\_down\_sync}, che consente uno scambio di valori tra i thread dello stesso warp.
+
+\begin{lstlisting}[
+    language=C++,
+    caption={La signature di \texttt{\_\_shfl\_down\_sync}.}
+]
+/**
+ * Parameters:
+ *  mask: a mask that selects the threads that participate to the
+ *      shuffle. If width=warpSize(=32), then mask=0xFFFFFFFF means 
+ *      that all of the 32 threads of the warp participate to the 
+ *      shuffle
+ *  var: the variable that the thread wants to share
+ *  delta: the index offset of the thread that holds the wanted 
+ *      value. For example, if the current thread has lane=k, then 
+ *      it will receive the value of var that the thread with 
+ *      lane=k+delta holds
+ *  width (default: warpSize): the width of the shuffle
+ *
+ * Returns the value of var obtained from the thread of lane + delta
+ */
+T __shfl_down_sync(unsigned mask, T var, unsigned int delta, 
+                   int width=warpSize);
+\end{lstlisting}
+
+\begin{lstlisting}[
+    language=C++, 
+    caption={Una terza implementazione parallela dell'approssimazione del trapezio. Questa versione effettua la somma parziale di un warp mediante lo shuffling, che implementa un meccanismo opaco di accesso condiviso ai registri dei thread dello stesso warp.}
+]
+__device__ float Warp_Sum(float val) {
+    unsigned mask = 0xFFFFFFFF;
+    for (int offset = WARP_SIZE / 2; offset > 0; offset /= 2) {
+        val += __shfl_down_sync(mask, val, offset);
+    }
+    return val;
+}
+
+__global__ void Dev_trap_warp_shuffle(const float a, const float b, 
+                                      const float h, const int n, 
+                                      float* trap_p) {
+    int my_i = blockDim.x * blockIdx.x + threadIdx.x;
+    int mylane = threadIdx.x % WARP_SIZE;
+    float my_val = (my_i > 0 && my_i < n) ? f(a + my_i * h) : 0.0f;
+    float warp_sum = Warp_Sum(my_val);
+    if (mylane == 0) {
+        atomicAdd(trap_p, warp_sum);
+    }
+}
+\end{lstlisting}
+
+Finora, abbiamo assunto che un blocco contenesse un singolo warp.
+Poichè uno SM esegue, secondo l'architettura descritta, un solo blocco alla volta, questa scelta limita di tanto la quantità di thread attivi durante l'esecuzione.
+Un concetto che si incastra perfettamente con questo ragionamento è l'\keyword{occupancy}, di cui parleremo in modo più approfondito.
+Vogliamo adesso generalizzare il nostro algoritmo a blocchi con, possibilmente, più di warp.
+
+\begin{lstlisting}[
+    language=C++, 
+]
+//trapezio.cu
+__global__ void Dev_trap_multi_warp_shuffle(const float a, 
+                                            const float b, 
+                                            const float h, 
+                                            const int n, 
+                                            float* result_ptr) {
+    __shared__ float warp_sum_arr[MAX_BLKSZ];   
+    int tid = threadIdx.x;
+    int w = tid / WARP_SIZE;
+    int my_lane = tid % WARP_SIZE;
+    int my_i = blockDim.x * blockIdx.x + tid;
+    float my_val = (my_i > 0 && my_i < n) ? f(a + my_i * h) : 0.0f;
+    float warp_sum = Warp_Sum(my_val);
+    if (my_lane == 0) {
+        warp_sum_arr[w] = warp_sum;
+    }
+    __syncthreads(); 
+    if (w == 0) {
+        int num_warps = blockDim.x / WARP_SIZE;
+        if (my_lane >= num_warps) {
+            warp_sum_arr[my_lane] = 0.0f;
+        }
+        my_val = warp_sum_arr[my_lane];
+        float sum = Warp_Sum(my_val);
+        if (my_lane == 0) {
+            atomicAdd(result_ptr, sum);
+        }
+    }
+}
+
+//main.cu
+#define INTERVAL_START 0.0f
+#define INTERVAL_END (2.0f * M_PI)
+#define EXPECTED_RESULT -0.12212260462f
+#define NUM_SUBDIVISIONS 16777216
+
+int main(void) {
+    float a = INTERVAL_START;
+    float b = INTERVAL_END;
+    int n = NUM_SUBDIVISIONS;
+    float h = (b - a) / n;
+
+    int blockSize = 32;
+    int numBlocks = (n + blockSize - 1) / blockSize;
+    
+    float* result_ptr;
+    cudaMallocManaged(&result_ptr, sizeof(float));
+
+    Dev_trap_multi_warp_shuffle<<<numBlocks, 
+                                  blockSize>>>(a, b, h, n, result_ptr);
+    cudaDeviceSynchronize();
+
+    printf("Error: %f\n", fabs(EXPECTED_RESULT - *result_ptr));
+    
+    cudaFree(result_ptr);
+    return 0;
+}
+\end{lstlisting}
+In quest'ultima implementazione, ciascun warp aggrega i contributi dei suoi thread e poi il thread con \texttt{my\_lane=0} inserisce tale somma aggregata nel vettore shared \texttt{warp\_sum\_arr} in posizione \texttt{w}, ovvero l'indice del warp all'interno del blocco.
+Infine, il primo warp (\texttt{w=0}) calcolerà il contributo dell'intero blocco mediante un altro shuffle e il thread con \texttt{my\_lane=0} lo aggiungerà al risultato finale mediante \texttt{atomicAdd}.
+
+\begin{note}{}
+    Le implementazioni qui riportate sono disponibili presso \href{https://github.com/riccardoregina/High-Performance-Computing}{questo repository}.
+\end{note}
+
+\section{Accesso efficiente alla memoria}
+Avendo già introdotto l'accesso alle memorie fornite dall'architettura CUDA, vediamo ora come usare quest'ultime in modo efficiente. Vedremo come sia la global memory che la shared memory sono costruite per uno specifico pattern di utilizzo che ne massimizza le performance.
+
+\subsection{Global memory (coalescing)}
+%TODO: Cita https://developer.nvidia.com/blog/unlock-gpu-performance-global-memory-access-in-cuda/
+Come visto, la programmazione CUDA spinge all'utilizzo di shared memory e registri.
+Tuttavia, prima che un dato possa raggiungere queste due memorie più veloci, è necessario che si acceda alla global memory.
+Pertanto, si vuole che l'accesso a quest'ultima sia il più veloce possibile.
+
+La global memory è suddivisa in \keyword{settori}, la cui dimensione dipende dalla specifica architettura del device, ma è generalmente un multiplo di 2. 
+Esempi sono 32, 64, 128, per le ultime generazioni. 
+L'inizio di un settore è sempre collocato in un indirizzo che è multiplo della dimensione del settore.
+
+La \keyword{coalescenza} è il meccanismo che unisce più accessi a memoria in poche transazioni di memoria. Infatti, il verbo inglese \textit{to coalesce} viene tradotto con \textit{unire}, \textit{fondere}.
+Affinché gli accessi possano avvenire nella stessa transazione di memoria, devono verificarsi due condizioni: a) la regione di memoria a cui si vuole accedere deve essere allineata al settore e deve essere contenuta al suo interno; b) gli accessi devono essere contigui e non devono intersecarsi.
+
+Per garantire la condizione (a), è necessario che il primo indirizzo di memoria a cui si vuole accedere coincida con l'inizio del settore: basta che sia un multiplo della dimensione di un settore.
+Per soddisfare (b), è necessario che vi sia un mapping ordinato tra i thread e il settore: assumendo che si voglia accedere ad elementi di un vettore di \texttt{float} (una variabile \texttt{float} occupa in genere 4 byte) e che la dimensione di un settore sia di 32 byte, allora otto thread possono ottenere un accesso in una sola transazione di memoria se il primo accede al primo elemento, il secondo al secondo etc. 
+È ammesso che un thread non acceda all'elemento ad esso corrispondente, a patto che non acceda ad un elemento che spetta ad un altro thread.
+
+\subsubsection{Un esempio di accesso coalescente: le matrici}
+Le matrici sono di gran lunga le strutture dati più utilizzate nel calcolo parallelo. 
+Vediamo, adesso, come garantire l'accesso coalescente ad una matrice allocata sulla global memory.
+
+Per garantire l'allineamento con i settori, conviene allocare una matrice sul device inserendo del \keyword{padding} tra una riga e l'altra.
+Si definisce \keyword{pitch} il numero di byte che una riga occupa fisicamente in memoria, considerando sia la dimensione logica che il padding.
+
+Spesso, una matrice \(m\times n\) viene allocata come un vettore di dimensione \(m\cdot n\) t.c. l'elemento in posizione \((i,j)\) venga individuato dall'indice \(i\cdot n + j\).
+Se viene usato il padding, detto \(p\) il pitch, l'elemento \((i,j)\) verrà individuato dall'indice \(i\cdot p +j\).
+Quando la matrice viene allocata come vettore, e con pitch, allora l'accesso a memoria è coalesced.
+
+Altre volte, invece, conviene usare matrici allocate per righe, in due dimensioni. 
+CUDA fornisce la funzione \texttt{cudaMallocPitch}, che alloca una matrice sul device, scegliendo in modo autonomo il valore ottimale per il pitch.
+
+\begin{lstlisting}[
+    language=C++,
+    caption={}
+]
+/**
+ * Parameters:
+ *  devPtr: il puntatore all'area di memoria del device
+ *  pitch: il valore del pitch in byte
+ *  widthInBytes: dimensione di una riga logica in byte
+ *  height: il numero di righe
+ * 
+ * Returns:
+ *  cudaSuccess, cudaErrorMemoryAllocation
+ */
+cudaError_t cudaMallocPitch(void** devPtr, size_t* pitch, 
+                            size_t widthInBytes, size_t height)
+
+// myprogram.cu
+float** matrix_dev;
+float* pitch;
+cudaMallocPitch(&matrix_dev, &pitch, 
+				n * sizeof(float), m);
+pitch = pitch / sizeof(float);
+\end{lstlisting}
+
+Quando una matrice viene allocata sul device con padding, conviene utilizzare la funzione \texttt{cudaMemcpy2D}, che gestisce automaticamente la trasformazione della matrice tra la sua versione con padding e la sua versione senza padding.
+
+Se la matrice è allocata in due dimensioni, si usa, per semplicità, suddividere la matrice su un blocco bidimensionale. 
+In tal caso, si potrebbe pensare di utilizzare \texttt{threadIdx.x} come indice di riga, \(i\), in quanto primo indice, e \texttt{threadIdx.y} come indice di colonna, \(j\), ma ciò non è affatto conveniente: supponendo che la dimensione di un settore sia \(32\) byte, i due thread \((i,j)\) e \((i,j+1)\), per matrici sufficientemente grandi (i.e., con un numero di colonne \(\geq 32\)), non apparterrebbero allo stesso settore, non permettendo un accesso coalesced. 
+Invece, usare \(threadIdx.y\) come indice di riga e \(threadIdx.x\) come indice di colonna permette un accesso coalesced.
+Ciò avviene perché si ricorda che CUDA serializza i blocchi facendo correre più velocemente \texttt{threadIdx.x}, poi \texttt{threadIdx.y}, poi \texttt{threadIdx.z}.
+
+\begin{note}{}
+    Per ricordare il mapping favorevole, vedere \texttt{threadIdx.x} come l'ascissa, \texttt{threadIdx.y} come l'ordinata, \texttt{threadIdx.z} come la profondità. 
+    Non è un caso che tali indici formino la terna di coordinate cartesiane \texttt{(x,y,z)}.
+\end{note}
+
+\subsection{Shared memory}
+%TODO: Cita https://feldmann.nyc/blog/smem-microbenchmarks
+La shared memory è suddivisa in \(32\) \keyword{banchi} (o, banks).
+Ogni banco è una porzione di shared memory di \(4\) byte.
+Su un banco è possibile effettuare un'operazione di lettura o di scrittura in un singolo ciclo macchina.
+La suddivisione in banchi è circolare: premettendo che la shared memory è \textit{byte-addressed}\footnote{Una memoria è byte-addressed quando presenta un indirizzo di memoria per ogni suo byte.}, i suoi indirizzi sono suddivisi in banchi secondo la funzione \texttt{bank(addr) = (addr/4) \% 32}.
+Ciò significa che, dato un array in shared memory \texttt{\_\_shared\_\_ float s[64]}, gli elementi \texttt{s[0]}, \texttt{s[32]} appartengono allo stesso banco, gli elementi \texttt{s[1]}, \texttt{s[33]} appartengono al banco successivo e così via.
+
+Accessi allo stesso banco vengono serializzati, mentre accessi a banchi diversi avvengono simultaneamente.
+Se tutti i thread devono leggere dallo stesso indirizzo dello stesso banco, allora il valore contenuto in tale indirizzo viene trasmesso simultaneamente ai thread richiedenti. Questa proprietà è chiamata \keyword{broadcasting}.
+Inoltre, la shared memory consente anche il \keyword{multicasting}, che consente più broadcasting simultanei.
+Ad esempio, sempre all'interno dello stesso warp, se un gruppo di thread, \(G_{1}\), vuole leggere il valore \texttt{s[0]} e un altro gruppo di thread, \(G_{2}\), vuole leggere il valore \texttt{s[1]}, allora \texttt{s[0]} viene trasmesso simultaneamente a tutti i thread di \(G_{1}\) e \texttt{s[1]} viene trasmesso simultaneamente a tutti i thread di \(G_{2}\).
+
+\section{Occupancy}
+L'aspetto più importante per rendere efficiente un kernel è la memoria ed in particolare il suo utilizzo.
+Un algoritmo è detto \keyword{memory-bound} quando è limitato dalla latenza (o dalla banda) di memoria, mentre è detto \keyword{compute-bound} quando è limitato dalla potenza di calcolo.
+Un algoritmo memory-bound fa uso intensivo della memoria e.g. kernel che accedono a matrici, mentre un algoritmo compute-bound non accede molto alla memoria ma effettua tanti calcoli.
+Le operazioni su matrici sono tipicamente memory-bound.
+Un modo standard per calcolare se un algoritmo è limitato dalla latenza di memoria o dalla potenza di calcolo è la sua \keyword{intensità aritmetica}, indicata con \(I\) e definita come il rapporto tra il numero di operazioni aritmetiche e il numero di byte di dati che devono essere caricati o memorizzati dalla memoria per eseguire quelle operazioni, ovvero 
+\[I = \frac{\text{\#flops}}{\text{\#byte trasferiti da e verso la memoria}}.\]
+Un algoritmo a bassa intensità aritmetica spende più tempo a trasferire dati che a eseguire calcoli, quindi memory-bound.
+Un algoritmo ad alta intensità aritmetica può invece sfruttare appieno la potenza di calcolo e sarà pertanto compute-bound.
+
+Per calcolare l'intensità aritmetica, è necessario contare quante flop sono richieste e stimare quanti byte vengono letti/scritti in memoria.
+
+\subsection{Coprire la latenza}
+Quando vuole accedere alla memoria, un warp viene fermato dallo scheduler dello SM in attesa di ottenere accesso alla risorsa.
+Durante il tempo di attesa, se vi sono altri warp pronti all'esecuzione, lo scheduler sostituisce il warp in attesa con uno di essi.
+Una volta ottenuto l'accesso, il primo warp riprenderà la sua esecuzione.
+
+Questo meccanismo permette di coprire la latenza di memoria con il calcolo.
+Affinchè ciò sia possibile, è necessario che vi siano i sopracitati warp pronti all'esecuzione, ovvero che lo SM sia sufficientemente \keyword{occupato}.
+
+D'altra parte, bisognerebbe sempre puntare al riutilizzo locale dei dati, facendo uso dei registri e della shared memory.
+Tuttavia, quando ciò non è possibile, bisogna cercare di massimizzare l'occupazione dello SM.
+
+\subsection{Definizione}
+Si definisce \keyword{occupancy} il rapporto
+\[\text{occupancy}=\frac{\#w_{\text{active}}}{\#w_{\max}}\]
+ovvero il rapporto tra il numero dei warp attivi, \(\#w_{\text{active}}\), su uno SM e il numero massimo di warp attivi, \(\#w_{\max}\), che uno SM può eseguire.
+
+\begin{note}{}
+    L'occupancy misura quanto un kernel riempie uno SM, non l'intero device. Infatti, se un kernel utilizza un solo SM, riempiendolo al massimo, allora l'occupancy calcolata è del 100\%. Tuttavia, non si può dire che il kernel stia sfruttando al massimo il device.
+\end{note}
+
+\subsection{Calcolare l'occupancy}
+L'occupancy può essere calcolata a partire dai parametri di lancio del kernel e dalle caratteristiche del device a disposizione. I parametri di lancio sono:
+\begin{itemize}
+    \item numero di blocchi per SM;
+    \item numero di thread per blocco;
+    \item registri per thread, derivante dal codice Assembly del kernel;
+    \item shared memory per blocco.
+\end{itemize}
+Le caratteristiche del device sono:
+\begin{itemize}
+    \item il massimo numero di thread per SM;
+    \item il massimo numero di warp per SM;
+    \item il massimo numero di blocchi per SM;
+    \item la dimensione della shared memory di un SM.
+\end{itemize}
+
+Infatti, se i parametri di lancio non rispettano tutti i limiti del device, il grado di parallelismo del kernel verrà inevitabilmente limitato: non tutti i blocchi potranno eseguire contemporaneamente.
+
+Formalmente, supponiamo che un blocco abbia \(T_{b}\) thread e \(W_{b} = \frac{T_{b}}{32}\) warp. Se uno SM può contenere al massimo \(B_{\max}\) blocchi e \(W_{\max}\) warp, allora il numero massimo di warp ideale è
+\[
+W_{\text{active}} = \min \left\{ B_{\text{resident}} \cdot W_{b}, W_{\max} \right\}
+\]
+dove \(B_{\text{resident}}\) è il numero di blocchi residenti sullo SM, ovvero quei blocchi che sono contemporaneamente sullo SM. Tale \(B_{\text{resident}}\) dipende dai parametri di lancio e dalle caratteristiche del device.
+
+Ad esempio, se \texttt{blocksize} è troppo grande, il numero di blocchi residenti potrebbe essere limitato dal numero massimo di thread su uno SM. 
+Se \texttt{blocksize} è troppo piccola, allora il numero massimo di blocchi per SM potrebbe essere raggiunto anche con molti meno thread rispetto alla capacità massima dello SM.
+
+Un altro fattore da tenere in considerazione è il numero di registri di cui ogni thread fa uso per il lancio. 
+Ogni SM ha un numero di registri. Se ciascun thread ne usa troppi, allora il numero di registri dello SM potrebbe non bastare per ospitare tutti i thread del lancio, riducendo l'occupancy. 
+In generale, thread che usano pochi registri favoriscono l'occupancy. 
+Tuttavia, si noti che l'uso di molti registri potrebbe limitare l'uso di memorie lente e far diminuire il tempo di esecuzione. 
+Come si vede, l'occupancy non è il fine.
+
+Un fattore limitante per l'occupancy può essere, come già detto, la shared memory allocata per ogni blocco. 
+Se la somma delle dimensioni delle shared memory dei blocchi supera la capacità dello SM, allora non tutti i blocchi possono eseguire simultaneamente sullo SM, riducendo l'occupancy.
+
+Con i ragionamenti precedenti è possibile calcolare l'occupancy teorica per un lancio di un kernel. Tuttavia, le tante variabili reali fanno sì che l'occupancy reale possa essere inferiore. 
+In particolare, ciò può essere dovuto ad uno squilibrio del carico (dei warp finiscono in ritardo rispetto agli altri), a divergenza eccessiva all'interno di un warp, a kernel troppo piccoli (potrebbe non esserci tempo per popolare davvero il device).
+
+Per poter calcolare l'occupancy reale, è necessaria un'instrumentazione possibile solo mediante profiling (i.e., \texttt{ncu}, \texttt{nvprof}), che è tipicamente possibile sulle schede per il calcolo e non per quelle da gaming, tranne qualche eccezione.
+
+\begin{note}{}
+Se non si dispone di una GPU con capacità di profiling, è disponibile, presso \href{https://github.com/riccardoregina/High-Performance-Computing}{questo repository}, un calcolatore dell'occupancy teorica, che, però, richiede di conoscere il numero di registri richiesti dal kernel.
+Tale numero può essere ricavato da strumenti analitici più semplici come \texttt{nsys}.
+Per ulteriori dettagli consultare il README del repository indicato.
+\end{note}
