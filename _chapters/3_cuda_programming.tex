@@ -569,7 +569,7 @@ Durante il tempo di attesa, se vi sono altri warp pronti all'esecuzione, lo sche
 Una volta ottenuto l'accesso, il primo warp riprenderà la sua esecuzione.
 
 Questo meccanismo permette di coprire la latenza di memoria con il calcolo.
-Affinchè ciò sia possibile, è necessario che vi siano i sopracitati warp pronti all'esecuzione, ovvero che lo SM sia sufficientemente \keyword{occupato}.
+Affinchè ciò sia possibile, è necessario che vi siano i sopracitati warp pronti all'esecuzione, ovvero che lo SM sia sufficientemente \emph{occupato}.
 
 D'altra parte, bisognerebbe sempre puntare al riutilizzo locale dei dati, facendo uso dei registri e della shared memory.
 Tuttavia, quando ciò non è possibile, bisogna cercare di massimizzare l'occupazione dello SM.
