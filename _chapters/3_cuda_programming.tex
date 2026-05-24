@@ -629,3 +629,101 @@ Se non si dispone di una GPU con capacità di profiling, è disponibile, presso 
 Tale numero può essere ricavato da strumenti analitici più semplici come \texttt{nsys}.
 Per ulteriori dettagli consultare il README del repository indicato.
 \end{note}
+
+\section{Benchmarking}
+Il benchmarking consente di quantificare le performance di un kernel e di confrontare quest'ultimo con altre implementazioni in modo oggettivo.
+Il benchmarking presenta insidie e scelte, tra loro incompatibili, che l'utente deve saper fare.
+
+\subsection{Host timers}
+Si potrebbe essere interessati alla performance complessiva del programma e non, in modo specifico, a quella del kernel.
+In questo caso, si può utilizzare sia \texttt{sys/time.h} (solo su Linux) che \texttt{time.h}.
+
+L'header \texttt{sys/time.h} mette a disposizione la funzione \texttt{gettimeofday}, che usa il tipo \texttt{struct timeval}, che ha i seguenti campi:
+\begin{itemize}
+    \item \texttt{tv\_sec}, il numero di secondi trascorsi dal 1-1-1970;
+    \item \texttt{tv\_usec}, il numero di microsecondi da aggiungere a \texttt{tv\_sec}.
+\end{itemize}
+In questo modo, è possibile misurare il tempo di esecuzione di un algoritmo inserendo dei checkpoint:
+\begin{lstlisting}[
+    language=C++,
+    caption={}
+]
+#include <sys/time.h>
+
+/*
+ * int gettimeofday(
+ *  struct timeval *tv, /* in/out */
+ *  struct timezone *tz /* in (optional) */
+ * )
+
+struct timeval *start, *stop;
+gettimeofday(start, NULL);
+//[...]
+gettimeofday(stop, NULL);
+
+long elapsed = (end.tv_sec - start.tv_sec) * 1000000 + (end.tv_usec - start.tv_usec);
+printf("Elapsed time: %ld us\n", elapsed);
+\end{lstlisting}
+
+In alternativa, se si è interessati a misurare solo il tempo effettivo in cui la CPU ha eseguito il codice, è opportuno l'utilizzo della funzione
+
+\begin{lstlisting}[
+    language=C++,
+    caption={}
+]
+#include <time.h>
+
+/* 
+ * clock_t clock()
+ */
+
+clock_t start = clock();
+	
+//[...]
+clock_t end = clock();
+	
+double elapsed = (double)(end - start) / CLOCKS_PER_SEC;
+/* CLOCKS_PER_SEC is a standard C
+ * macro whose value is the number
+ * of ticks per second on the current
+ * machine.
+ */
+printf("Elapsed CPU: %f s\n", elapsed);
+\end{lstlisting}
+
+\begin{note}{}
+    Ricorda di posizionare il timestamp finale dopo l'istruzione \texttt{cudaDeviceSynchronize} e non subito dopo l'invocazione del kernel
+    Altrimenti, non si misurerebbe il tempo di esecuzione del kernel, bensì il tempo di invio della richiesta d'esecuzione al device, poiché l'invocazione di un kernel è, dal punto di vista dell'host, asincrona.
+\end{note}
+
+\subsection{Buone pratiche}
+In ogni approccio, è di cruciale importanza raccogliere più misurazioni e calcolare la media o la mediana di essi. Infatti, il tempo di esecuzione può variare a causa di fattori esterni (e.g. scheduling, cache).
+
+Per lo stesso motivo, è consigliato effettuare del riscaldamento, anche detto \keyword{warm-up}, prima dell'effettiva misurazione, cosicché la GPU vada a regime sin dalla prima misurazione.
+
+Inoltre, bisogna fare attenzione alle cifre significative, alla risoluzione, all'unità di misura della soluzione scelta.
+
+\subsection{CUDA Events}
+Se si vuole misurare la performance del kernel in isolamento, è necessario utilizzare l'API di CUDA per gli eventi.
+
+\begin{lstlisting}[
+    language=C++,
+    caption={}
+]
+cudaEvent_t start, stop;
+float elapsed;
+
+cudaEventCreate(&start);
+cudaEventCreate(&stop);
+
+cudaEventRecord(start, 0);
+kernel<<<dimgrid,dimblocks>>> (...);
+cudaEventRecord(stop, 0);
+cudaEventSynchronize(stop);
+
+cudaEventElapsedTime(&time, start, stop);
+cudaEventDestroy(start);
+cudaEventDestroy(stop);
+\end{lstlisting}
+
+Le misurazioni effettuate come mostrato seguono il clock della GPU.
