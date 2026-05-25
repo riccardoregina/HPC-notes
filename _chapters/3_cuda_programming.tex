@@ -692,7 +692,7 @@ printf("Elapsed CPU: %f s\n", elapsed);
 \end{lstlisting}
 
 \begin{note}{}
-    Ricorda di posizionare il timestamp finale dopo l'istruzione \texttt{cudaDeviceSynchronize} e non subito dopo l'invocazione del kernel
+    Ricorda di posizionare il timestamp finale dopo l'istruzione \texttt{cudaDeviceSynchronize} e non subito dopo l'invocazione del kernel.
     Altrimenti, non si misurerebbe il tempo di esecuzione del kernel, bensì il tempo di invio della richiesta d'esecuzione al device, poiché l'invocazione di un kernel è, dal punto di vista dell'host, asincrona.
 \end{note}
 
@@ -727,3 +727,7 @@ cudaEventDestroy(stop);
 \end{lstlisting}
 
 Le misurazioni effettuate come mostrato seguono il clock della GPU.
+
+\begin{note}{}
+Un altro modo per misurare le performance di un kernel è mediante il profiling del device.
+\end{note}
