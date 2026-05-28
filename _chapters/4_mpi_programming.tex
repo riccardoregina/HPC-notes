@@ -660,7 +660,74 @@ MPI_Type_free(&sub_type);
 Questo costruttore è particolarmente utile nella I/O parallela con \texttt{MPI\_File\_set\_view}, dove ogni processo descrive la propria porzione di un file condiviso tramite un tipo subarray.
 
 \section{Gestione degli errori} 
-%TODO
+Per impostazione predefinita, MPI termina l'esecuzione del programma non appena si verifica un errore. 
+Questo comportamento è controllato dagli \keyword{error handlers}, oggetti MPI associati ad un comunicatore, ad un file oppure ad una finestra. È possibile modificare il comportamento predefinito installando un handler personalizzato tramite:
+\begin{lstlisting}[language=C, numbers=none]
+MPI_Comm_set_errhandler(MPI_Comm comm, MPI_Errhandler errhandler)
+\end{lstlisting}
+Gli handler predefiniti disponibili sono:
+\begin{itemize}
+    \item \texttt{MPI\_ERRORS\_ARE\_FATAL}: l'handler predefinito; qualsiasi errore causa la terminazione immediata di tutti i processi del job MPI;
+    \item \texttt{MPI\_ERRORS\_RETURN}: l'errore viene restituito come codice di ritorno della funzione MPI chiamante, lasciando al programma la responsabilità di gestirlo;
+    \item \texttt{MPI\_ERRORS\_ABORT}: simile a \texttt{MPI\_ERRORS\_ARE\_FATAL}, ma la terminazione è limitata al comunicatore su cui si è verificato l'errore (disponibile da MPI-4).
+\end{itemize}
+
+Quando si utilizza \texttt{MPI\_ERRORS\_RETURN}, ogni funzione MPI restituisce \texttt{MPI\_SUCCESS} in caso di successo, oppure un codice di errore diverso da zero. È buona pratica verificare sistematicamente il valore restituito nelle applicazioni di produzione:
+\begin{lstlisting}[language=C, numbers=none]
+int err = MPI_Send(buf, count, MPI_DOUBLE, dest, tag, comm);
+if (err != MPI_SUCCESS) {
+    char error_string[MPI_MAX_ERROR_STRING];
+    int len;
+    MPI_Error_string(err, error_string, &len);
+    fprintf(stderr, "MPI_Send fallita: %s\n", error_string);
+    MPI_Abort(comm, err);
+}
+\end{lstlisting}
+La funzione \texttt{MPI\_Error\_string} converte un codice di errore in una stringa leggibile; \texttt{MPI\_MAX\_ERROR\_STRING} è la lunghezza massima garantita per tale stringa. La funzione \texttt{MPI\_Abort} termina tutti i processi associati al comunicatore specificato, restituendo il codice di errore al sistema operativo.
+
+\subsection{Handler personalizzati}
+È possibile definire un handler di errore personalizzato tramite \texttt{MPI\_Comm\_create\_errhandler}:
+\begin{lstlisting}[language=C, numbers=none]
+MPI_Comm_create_errhandler(MPI_Comm_errhandler_function *fn,
+                           MPI_Errhandler *errhandler)
+\end{lstlisting}
+La funzione di gestione deve avere la seguente firma:
+\begin{lstlisting}[language=C, numbers=none]
+void my_error_handler(MPI_Comm *comm, int *err, ...)
+\end{lstlisting}
+dove \texttt{comm} è il comunicatore su cui si è verificato l'errore ed \texttt{err} è il codice di errore. Al termine dell'uso, l'handler deve essere liberato con \texttt{MPI\_Errhandler\_free}.
+
+L'esempio seguente installa un handler personalizzato su \texttt{MPI\_COMM\_WORLD} che stampa un messaggio diagnostico prima di terminare:
+\begin{lstlisting}[language=C, numbers=none]
+void my_error_handler(MPI_Comm *comm, int *err, ...) {
+    char error_string[MPI_MAX_ERROR_STRING];
+    int len;
+    MPI_Error_string(*err, error_string, &len);
+    fprintf(stderr, "[rank ?] Errore MPI: %s\n", error_string);
+    MPI_Abort(*comm, *err);
+}
+
+int main(int argc, char *argv[]) {
+    MPI_Init(&argc, &argv);
+
+    MPI_Errhandler handler;
+    MPI_Comm_create_errhandler(my_error_handler, &handler);
+    MPI_Comm_set_errhandler(MPI_COMM_WORLD, handler);
+    MPI_Errhandler_free(&handler);
+
+    /* Codice parallelo */
+
+    MPI_Finalize();
+    return 0;
+}
+\end{lstlisting}
+
+\subsection{Classi di errore}
+MPI raggruppa i codici di errore in \keyword{classi di errore}, ottenibili tramite:
+\begin{lstlisting}[language=C, numbers=none]
+MPI_Error_class(int errorcode, int *errorclass)
+\end{lstlisting}
+Le classi più comuni includono \texttt{MPI\_ERR\_COMM} (comunicatore non valido), \texttt{MPI\_ERR\_TYPE} (tipo di dato non valido), \texttt{MPI\_ERR\_COUNT} (conteggio negativo), \texttt{MPI\_ERR\_TAG} (tag non valido) e \texttt{MPI\_ERR\_RANK} (rank fuori dai limiti del comunicatore). Le classi consentono di reagire in modo differenziato a categorie di errori senza dover enumerare tutti i possibili codici specifici dell'implementazione.
 
 \section{Creazione dinamica di Processi} 
 MPI permette di aggiungere processi a un'applicazione già avviata tramite \texttt{MPI\_Comm\_spawn}. Il processo "padre" riceve un \keyword{inter-communicator} per comunicare con i processi "figli" appena nati.
