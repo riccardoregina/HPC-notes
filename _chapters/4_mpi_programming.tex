@@ -732,7 +732,137 @@ Le classi più comuni includono \texttt{MPI\_ERR\_COMM} (comunicatore non valido
 \section{Creazione dinamica di Processi} 
 MPI permette di aggiungere processi a un'applicazione già avviata tramite \texttt{MPI\_Comm\_spawn}. Il processo "padre" riceve un \keyword{inter-communicator} per comunicare con i processi "figli" appena nati.
 
-%TODO: continua
+\subsection{MPI\_Comm\_spawn}
+La funzione fondamentale per la creazione dinamica è:
+\begin{lstlisting}[language=C, numbers=none]
+MPI_Comm_spawn(const char *command,
+               char *argv[],
+               int maxprocs,
+               MPI_Info info,
+               int root,
+               MPI_Comm comm,
+               MPI_Comm *intercomm,
+               int array_of_errcodes[])
+\end{lstlisting}
+I parametri principali sono:
+\begin{itemize}
+    \item \texttt{command}: il percorso dell'eseguibile da avviare;
+    \item \texttt{argv}: gli argomenti da passare all'eseguibile, terminati da \texttt{NULL} (oppure \texttt{MPI\_ARGV\_NULL} se non vi sono argomenti);
+    \item \texttt{maxprocs}: il numero di processi figli da creare;
+    \item \texttt{info}: un oggetto \texttt{MPI\_Info} che può contenere hint all'ambiente di esecuzione (es. il nodo su cui avviare i processi), oppure \texttt{MPI\_INFO\_NULL};
+    \item \texttt{root}: il rank del processo nel comunicatore \texttt{comm} che effettua la chiamata (solo i parametri di questo processo sono significativi);
+    \item \texttt{intercomm}: in uscita, l'inter-comunicatore che collega il processo padre ai figli;
+    \item \texttt{array\_of\_errcodes}: array di lunghezza \texttt{maxprocs} che riceve il codice di errore per ciascun processo figlio; è possibile passare \texttt{MPI\_ERRCODES\_IGNORE} se non si intende verificarli.
+\end{itemize}
+
+Dal lato dei processi figli, l'inter-comunicatore verso il padre è ottenibile tramite:
+\begin{lstlisting}[language=C, numbers=none]
+MPI_Comm parent;
+MPI_Comm_get_parent(&parent);
+\end{lstlisting}
+Se il processo non è stato creato dinamicamente, \texttt{parent} viene impostato a \texttt{MPI\_COMM\_NULL}.
+
+\subsection{Inter-comunicatori}
+Un \keyword{inter-comunicatore} collega due gruppi distinti di processi: il gruppo locale (quello del processo chiamante) e il gruppo remoto. A differenza degli intra-comunicatori, in un inter-comunicatore le operazioni di comunicazione avvengono sempre tra i due gruppi: un processo del gruppo locale invia a un processo del gruppo remoto e viceversa.
+
+Le funzioni \texttt{MPI\_Comm\_rank} e \texttt{MPI\_Comm\_size} applicate ad un inter-comunicatore restituiscono rispettivamente il rank del processo nel proprio gruppo locale e la dimensione di tale gruppo. Per interrogare il gruppo remoto si usano:
+\begin{lstlisting}[language=C, numbers=none]
+MPI_Comm_remote_size(MPI_Comm intercomm, int *size)
+MPI_Comm_remote_group(MPI_Comm intercomm, MPI_Group *group)
+\end{lstlisting}
+
+Se si desidera convertire un inter-comunicatore in un intra-comunicatore che includa entrambi i gruppi (utile per eseguire operazioni collettive tra padre e figli), si utilizza:
+\begin{lstlisting}[language=C, numbers=none]
+MPI_Intercomm_merge(MPI_Comm intercomm, int high, MPI_Comm *newintracomm)
+\end{lstlisting}
+Il parametro \texttt{high} stabilisce l'ordinamento dei rank nel nuovo comunicatore: i processi che passano \texttt{high=0} riceveranno rank più bassi di quelli che passano \texttt{high=1}.
+
+\subsection{Esempio: padre e figli}
+Il seguente esempio mostra un processo padre che crea \texttt{N\_WORKERS} processi figli, invia a ciascuno un intero da elaborare e raccoglie i risultati.
+
+Il contenuto del file sorgente \texttt{master.c}:
+\begin{lstlisting}[language=C, numbers=none]
+#include "mpi.h"
+#include <stdio.h>
+#define N_WORKERS 4
+
+int main(int argc, char *argv[]) {
+    MPI_Init(&argc, &argv);
+
+    MPI_Comm intercomm;
+    MPI_Comm_spawn("worker", MPI_ARGV_NULL, N_WORKERS,
+                   MPI_INFO_NULL, 0, MPI_COMM_SELF,
+                   &intercomm, MPI_ERRCODES_IGNORE);
+
+    /* Invia un valore distinto a ciascun figlio */
+    for (int i = 0; i < N_WORKERS; i++) {
+        int data = i * 10;
+        MPI_Send(&data, 1, MPI_INT, i, 0, intercomm);
+    }
+
+    /* Raccoglie i risultati */
+    for (int i = 0; i < N_WORKERS; i++) {
+        int result;
+        MPI_Recv(&result, 1, MPI_INT, i, 0, intercomm,
+                 MPI_STATUS_IGNORE);
+        printf("Risultato dal figlio %d: %d\n", i, result);
+    }
+
+    MPI_Comm_free(&intercomm);
+    MPI_Finalize();
+    return 0;
+}
+\end{lstlisting}
+
+\begin{note}{}
+    Il primo argomento passato alla funzione \texttt{MPI\_Comm\_spawn} è la stringa \texttt{"worker"}, che si assume sia il nome dell'eseguibile compilato a partire dal codice sorgente previsto per i worker (\texttt{worker.c}).
+\end{note}
+
+Il contenuto del file sorgente dei worker (\texttt{worker.c}):
+\begin{lstlisting}[language=C, numbers=none]
+#include "mpi.h"
+
+int main(int argc, char *argv[]) {
+    MPI_Init(&argc, &argv);
+
+    MPI_Comm parent;
+    MPI_Comm_get_parent(&parent);
+
+    /* Riceve il valore dal padre */
+    int data;
+    MPI_Recv(&data, 1, MPI_INT, 0, 0, parent,
+             MPI_STATUS_IGNORE);
+
+    /* Elaborazione: raddoppia il valore */
+    int result = data * 2;
+
+    /* Restituisce il risultato al padre */
+    MPI_Send(&result, 1, MPI_INT, 0, 0, parent);
+
+    MPI_Comm_free(&parent);
+    MPI_Finalize();
+    return 0;
+}
+\end{lstlisting}
+
+\subsection{MPI\_Comm\_spawn\_multiple}
+Quando si desidera avviare processi che eseguono eseguibili diversi, si utilizza la variante:
+\begin{lstlisting}[language=C, numbers=none]
+MPI_Comm_spawn_multiple(int count,
+                        char *array_of_commands[],
+                        char **array_of_argv[],
+                        const int array_of_maxprocs[],
+                        const MPI_Info array_of_info[],
+                        int root,
+                        MPI_Comm comm,
+                        MPI_Comm *intercomm,
+                        int array_of_errcodes[])
+\end{lstlisting}
+Questa funzione avvia \texttt{count} gruppi di processi, ciascuno con il proprio eseguibile, argomenti e numero di istanze. Il risultato è un unico inter-comunicatore verso tutti i processi figli creati, indipendentemente dall'eseguibile che eseguono.
+
+\begin{note}{}
+    La creazione dinamica di processi richiede che l'ambiente di esecuzione supporti il \keyword{dynamic process management}. Non tutte le implementazioni MPI o tutti i cluster lo abilitano per impostazione predefinita; in tali contesti è preferibile avviare in anticipo tutti i processi necessari e utilizzare \texttt{MPI\_Comm\_split} per organizzarli.
+\end{note}
 
 \section{Implementazioni di MPI} 
 Come già detto, MPI è una specifica e non una libreria.
