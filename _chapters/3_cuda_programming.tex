@@ -563,6 +563,40 @@ Un algoritmo ad alta intensità aritmetica può invece sfruttare appieno la pote
 
 Per calcolare l'intensità aritmetica, è necessario contare quante flop sono richieste e stimare quanti byte vengono letti/scritti in memoria.
 
+\begin{example}{}
+    Si consideri un kernel che esegue la moltiplicazione element-wise tra due vettori \(A\) e \(B\) di \(n\) elementi in singola precisione (float a 32 bit), producendo un vettore \(C\):
+    \[
+    C[i] = A[i] \times B[i] \quad \text{per } i = 0, \ldots, n-1.
+    \]
+    Per ogni elemento, si ha una operazione di moltiplicazione, quindi:
+    \[
+    \text{\#flops} = n.
+    \]
+    I dati trasferiti sono: lettura di \(A\) (\(n \times 4\) byte), lettura di \(B\) (\(n \times 4\) byte), scrittura di \(C\) (\(n \times 4\) byte), per un totale di \(3n \times 4 = 12n\) byte.
+    L'intensità aritmetica è pertanto:
+    \[
+    I = \frac{n}{12n} = \frac{1}{12} \approx 0.083 \ \text{flops/byte}.
+    \]
+    Il valore è molto basso, quindi il kernel è fortemente \textbf{memory-bound}: per ogni operazione aritmetica, devono essere trasferiti 12 byte di dati.
+\end{example}
+
+Più precisamente, la soglia per determinare se un kernel è memory- o compute-bound si basa sulle capacità del device.
+Infatti, detto \(C \text{ FLOP}/s\) il picco teorico di calcolo del device e \(M \text{ byte}/s\) il picco teorico di banda di memoria del device, allora la soglia sarà \(C/M \text{ FLOP}/\text{byte}\).
+
+\begin{example}{Soglia di intensità aritmetica su una GPU}
+    Si consideri una GPU con le seguenti specifiche teoriche:
+    \begin{itemize}
+        \item Picco di calcolo: \(C = 10 \text{ TFLOP/s} = 10 \times 10^{12} \text{ FLOP/s}\);
+        \item Banda di memoria: \(M = 500 \text{ GB/s} = 500 \times 10^{9} \text{ byte/s}\).
+    \end{itemize}
+    La soglia di intensità aritmetica è:
+    \[
+    I_{\text{soglia}} = \frac{C}{M} = \frac{10 \times 10^{12}}{500 \times 10^{9}} = \frac{10^{13}}{5 \times 10^{11}} = 20 \text{ FLOP/byte}.
+    \]
+    Un kernel è compute-bound se la sua intensità aritmetica \(I\) supera tale soglia (\(I > I_{\text{soglia}}\)), altrimenti è memory-bound. 
+    Nel caso della moltiplicazione element-wise vista in precedenza, con \(I = 1/12 \approx 0.083 \text{ FLOP/byte}\), si ha \(I \ll I_{\text{soglia}}\), confermando che il kernel è fortemente memory-bound su questa architettura.
+\end{example}
+
 \subsection{Coprire la latenza}
 Quando vuole accedere alla memoria, un warp viene fermato dallo scheduler dello SM in attesa di ottenere accesso alla risorsa.
 Durante il tempo di attesa, se vi sono altri warp pronti all'esecuzione, lo scheduler sostituisce il warp in attesa con uno di essi.
@@ -629,6 +663,45 @@ Se non si dispone di una GPU con capacità di profiling, è disponibile, presso 
 Tale numero può essere ricavato da strumenti analitici più semplici come \texttt{nsys}.
 Per ulteriori dettagli consultare il README del repository indicato.
 \end{note}
+
+\section{Classificazione di un kernel}
+Abbiamo già introdotto il concetto di intensità aritmetica per giustificare il controllo dell'occupancy.
+Nel fare ciò, abbiamo anche menzionato che un kernel può essere compute-bound o memory-bound.
+Tuttavia, la tassonomia di un kernel --- si intende i tipi di collo di bottiglia a cui può essere soggetto --- non sono solo due.
+Anzi, ne possiamo generalmente considerare ben cinque tipi:
+\begin{itemize}
+    \item \keyword{memory-bound}: il kernel è limitato dalla banda o dal traffico di memoria.
+    \item \keyword{compute-bound}: il kernel è limitato dalla capacità di calcolo aritmetico del device.
+    \item \keyword{latency-bound}: il kernel attende spesso accessi lenti o dipendenti.
+    \item \keyword{divergence-bound}: il kernel è rallentato dalle sincronizzazioni all'interno dei warp causati da thread divergenti.
+    \item \keyword{synchronization-bound}: il kernel è rallentato da barriere di sincronizzazione. A differenza di un kernel divergence-bound, qui le sincronizzazioni sono esplicite.
+\end{itemize}
+I colli di bottiglia menzionati \textbf{non} sono mutuamente esclusivi: un kernel può avere più colli di bottiglia contemporaneamente, se questi sono compatibili.
+
+\subsection{Ottimizzazione di un kernel}
+Per ottimizzare un kernel è necessario seguire un approccio metodologico che consenta di identificare i colli di bottiglia dominanti e di mitigarli progressivamente. Un possibile piano d'azione si articola in tre fasi principali.
+
+\paragraph{Analisi statica.} Prima di eseguire qualsiasi misurazione, è utile stimare teoricamente le caratteristiche del kernel. In particolare, si calcola l'intensità aritmetica \(I\) e la si confronta con la soglia \(I_{\text{soglia}} = C/M\) del device. Se \(I \ll I_{\text{soglia}}\) il kernel è potenzialmente memory-bound; se \(I \gg I_{\text{soglia}}\) è potenzialmente compute-bound. Si analizzano inoltre i pattern di accesso alla memoria (coalescenza, uso della shared memory, bank conflicts), la presenza di divergenze nei warp e l'eventuale uso di barriere esplicite (\texttt{\_\_syncthreads()}).
+
+\paragraph{Profiling.} L'analisi statica fornisce ipotesi che devono essere validate sperimentalmente tramite strumenti di profiling (e.g., NVIDIA Nsight Compute, nvprof). Il profiling rappresenta il \emph{test della realtà}: fornisce metriche quantitative quali:
+\begin{itemize}
+    \item \texttt{dram\_read/write\_throughput}: banda effettiva verso la memoria globale;
+    \item \texttt{sm\_throughput} o \texttt{achieved\_occupancy}: occupancy effettiva degli Streaming Multiprocessor;
+    \item \texttt{stall\_memory\_dependency}, \texttt{stall\_exec\_dependency}: percentuale di cicli in cui i warp sono bloccati per attesa memoria o dipendenze esecutive;
+    \item \texttt{branch\_divergence}: percentuale di divergenza nei branch;
+    \item \texttt{sync\_stall}: stalli dovuti a barriere di sincronizzazione.
+\end{itemize}
+L'obiettivo del profiling è determinare \emph{quale} collo di bottiglia sia effettivamente dominante, poiché il collo di bottiglia teorico potrebbe essere mascherato da altri fattori (e.g., latenza nascosta da un'elevata occupancy).
+
+\paragraph{Mitigazione.} Una volta identificato il collo di bottiglia primario, si applicano le opportune strategie:
+\begin{itemize}
+    \item \textbf{Memory-bound:} migliorare la coalescenza degli accessi, utilizzare shared memory per ridurre il traffico verso la memoria globale, impiegare texture memory o constant memory se i pattern di accesso lo consentono, aumentare l'occupancy per nascondere la latenza della memoria.
+    \item \textbf{Compute-bound:} ridurre il numero di operazioni aritmetiche (e.g., precalcolo, approssimazioni), sfruttare istruzioni intrinseche a bassa latenza, ottimizzare l'uso dei registri per ridurre lo spilling\footnote{Lo spilling (o register spilling) è un fenomeno che si verifica durante la compilazione del kernel, quando il compilatore non riesce a contenere tutte le variabili attive nei registri disponibili per thread ed è costretto a `rovesciare' (dall'inglese \emph{to spill}) parte del contenuto dei registri nella memoria locale} in memoria locale, dalla latenza molto più alta.
+    \item \textbf{Latency-bound:} aumentare l'occupancy per nascondere la latenza con più warp attivi, ridurre le dipendenze tra istruzioni consecutive (instruction-level parallelism), riordinare le operazioni per permettere al compilatore di schedulare meglio le istruzioni.
+    \item \textbf{Divergence-bound:} riorganizzare i dati o i thread per minimizzare la divergenza all'interno dei warp, evitare branch condizionali basati su \texttt{threadIdx} o su dati non uniformi nel warp.
+    \item \textbf{Synchronization-bound:} ridurre il numero di barriere \texttt{\_\_syncthreads()}, ove possibile sostituirle con sincronizzazioni più granulari, o riprogettare il kernel per diminuire la dipendenza tra thread.
+\end{itemize}
+Dopo ogni intervento, è essenziale ripetere il profiling per verificare l'efficacia dell'ottimizzazione e assicurarsi che il collo di bottiglia si sia spostato (idealmente) o ridotto. L'intero processo --- analisi, profiling, mitigazione --- è iterativo e termina quando le prestazioni raggiungono una soglia soddisfacente rispetto al picco teorico del device.
 
 \section{Benchmarking}
 Il benchmarking consente di quantificare le performance di un kernel e di confrontare quest'ultimo con altre implementazioni in modo oggettivo.
