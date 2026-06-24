@@ -15,7 +15,9 @@ Una GPU è comunemente chiamata \keyword{acceleratore} o \keyword{device} poich�
 \end{note}
 
 \section{L'architettura CUDA}
-CUDA è un'architettura ibrida che presenta tre livelli di parallelismo. Il primo, macroscopico, prevede la presenza di $p$ \keyword{Streaming Multiprocessor} (SM), che condividono tra loro la \keyword{global memory}. Quindi, a questo livello macroscopico, l'architettura è MIMD Shared Memory. Il secondo livello, intermedio, prevede che ciascun SM sia un calcolatore SIMD dotato di $Q$ \keyword{CUDA cores}. Ciascun SM ha una memoria condivisa, detta \keyword{shared memory}, a cui possono accedere i CUDA cores. Ciascun CUDA core è dotato di una memoria locale e privata. Ciascun SM, essendo SIMD, gestisce un tipo di operazione alla volta, poiché ha una sola unità di controllo.
+CUDA è un'architettura ibrida che presenta tre livelli di parallelismo. Il primo, macroscopico, prevede la presenza di $p$ \keyword{Streaming Multiprocessor} (SM), che condividono tra loro la \keyword{global memory}. Quindi, a questo livello macroscopico, l'architettura è MIMD Shared Memory. Il secondo livello, intermedio, prevede che ciascun SM sia un calcolatore SIMD dotato di $Q$ \keyword{CUDA cores}. Ciascun SM ha una memoria condivisa, detta \keyword{shared memory}, posizionata sullo SM, a cui possono accedere i CUDA cores appartenenti allo SM. 
+Ciascun CUDA core è dotato di una \keyword{local memory}, residente nella global memory, utilizzabile e visibile solo al CUDA core associato. 
+Ciascun SM, essendo SIMD, gestisce un tipo di operazione alla volta, poiché ha una sola unità di controllo.
 
 \begin{observation}{}
 Nella classica architettura SIMD, un \texttt{if-else} viene eseguito in modo sequenziale: il primo ramo viene eseguito da tutte le ALU che devono eseguire tale ramo, mentre le altre ALU aspettano; il secondo ramo viene eseguito dopo il primo dalle ALU che devono eseguire tale ramo, mentre le altre ALU aspettano. 
