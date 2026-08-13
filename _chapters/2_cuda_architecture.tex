@@ -3,12 +3,10 @@ Le GPU (Graphics Processing Units) emergono alla fine degli anni '90 come hardwa
 Nel 1999, NVIDIA rilascia sul mercato la GeForce 256, pubblicizzandola per la prima volta come \q{GPU}, sottolineando la sua capacità di accelerare le operazioni grafiche senza coinvolgere la CPU. 
 Per l'HPC, il vero salto avviene con l'introduzione delle GPGPU (General-Purpose GPU), che trasformano le GPU da acceleratori grafici a processori paralleli universali.
 Nel 2006, NVIDIA lancia CUDA (Compute Unified Device Architecture), un framework C/C++ per la programmazione parallela su GPU, dando definitivamente il via all'utilizzo general purpose delle GPU. 
-Nel 2007, AMD risponde con il lancio del framework ATI Stream\footnote{Ad oggi, AMD sviluppa il framework proprietario ROCm}. 
-Tuttavia, sia CUDA che ATI Stream erano framework proprietari e per giunta funzionanti solo sulle GPU di, rispettivamente, NVIDIA e AMD.
-Con lo scopo di definire un framework interoperabile, nel 2009, Khronos Group rilascia la specifica OpenCL.
-Tuttavia, NVIDIA depreca OpenCL nel 2017 e AMD sposta la sua attenzione su ROCm a partire dal 2016. 
-Allora, il Khronos Group rilascia, nel 2018, una nuova specifica, SYCL, inizialmente nata come estensione di OpenCL, che permette di unificare il codice per CPU e GPU in modo più naturale rispetto ai framework precedenti e che sta trovando crescente supporto da parte dei principali produttori hardware, tra cui NVIDIA (con DPC++), AMD (con hipSYCL), e Intel (con Intel oneAPI), che stanno adottando SYCL come standard per il calcolo parallelo moderno.
-Allo stato attuale, però, CUDA garantisce ancora le migliori performance su hardware NVIDIA, grazie a decenni di ottimizzazioni e a un ecosistema maturo.
+Verso la metà degli anni 2010, il Deep Learning dà nuovo impulso al computing: la centralità dei prodotti matriciali (GEMM) spinge NVIDIA, con l'architettura Volta (2017), ad introdurre i \emph{Tensor core}, ottimizzati per le GEMM a bassa precisione.
+Negli anni 2020, l'impulso si trasforma in uno tsunami: sempre più reti neurali vengono basate su \emph{transformer}, rendendosi particolarmente adatte all'esecuzione su GPU, che diventano più che mai centrali nel campo del machine learning.
+La natura sempre più GPU-bound del computing porta NVIDIA a sviluppare la Grace CPU, integrata con le GPU dell'architettura Hopper (2022) per favorire una maggiore larghezza di banda, nonchè una bassa latenza di memoria.
+Producendo sia CPU che GPU, NVIDIA capisce di poter costruire in piena autonomia sistemi per l'HPC, come il rack GB200 NVL72 basato sull'architettura Blackwell (2024), nonchè sistemi consumer orientati all'AI locale come il DGX Spark.
 
 \begin{note}{Terminologia}
 Una GPU è comunemente chiamata \keyword{acceleratore} o \keyword{device} poiché comunemente utilizzata per accelerare calcoli \q{molto paralleli} che la CPU soddisferebbe in modo poco efficiente.
