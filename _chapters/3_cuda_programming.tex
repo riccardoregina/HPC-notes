@@ -18,7 +18,7 @@ I thread di un warp eseguono in \keyword{lockstep}\footnote{In realtà, a partir
 
 Come vedremo, il framework CUDA spinge a ragionare a livello di warp.
 Infatti, all'interno di un warp, i thread possono cooperare in modo efficiente mediante i propri registri.
-Ciascun thread di un warp ha un indice chiamato \keyword{lane}, un numero nell'insieme \(\set{0, \ldots, \text{warpSize}}\).
+Ciascun thread di un warp ha un indice chiamato \keyword{lane}, un numero nell'insieme \(\set{0, \ldots, \text{warpSize}-1}\).
 
 \section{Kernel, funzioni}
 Un \keyword{kernel} è una funzione invocata dall'host ed eseguita sul device. Un kernel è eseguito da una griglia di thread. Tutti i thread della griglia eseguono il kernel.
@@ -31,7 +31,7 @@ __global__ void kernel_name(arguments) {
 \end{lstlisting}
 
 In CUDA, ogni funzione ha uno scope in termini di invocazione ed esecuzione rispetto a host e device.
-Una funzione \texttt{\_\_global} può essere invocata solo dall'host ed eseguita sul device.
+Una funzione \texttt{\_\_global\_\_} può essere invocata solo dall'host ed eseguita sul device.
 Una funzione \texttt{\_\_device\_\_} può essere invocata solo dal device ed eseguita sul device.
 Una funzione \texttt{\_\_host\_\_} può essere invocata solo dall'host ed eseguita sull'host.
 Se non specificato, lo scope di una funzione è \texttt{\_\_host\_\_}.
