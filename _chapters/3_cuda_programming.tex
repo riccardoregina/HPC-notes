@@ -804,3 +804,176 @@ Le misurazioni effettuate come mostrato seguono il clock della GPU.
 \begin{note}{}
 Un altro modo per misurare le performance di un kernel è mediante il profiling del device.
 \end{note}
+
+\section{Tensor Cores: Acceleratori per GEMM}
+Come già menzionato all'inizio del capitolo, i \keyword{tensor core} sono stati introdotti come ulteriore specializzazione delle GPU per accelerare ulteriormente le GEMM a bassa precisione che sono alla base delle reti neurali.
+
+\begin{definition}{GEMM}
+    GEMM sta per \keyword{GE}neral \keyword{M}atrix-matrix \keyword{M}ultiplication e indica l'operazione di moltiplicazione e accumulo nella forma:
+    \[ C \leftarrow \alpha A B + \beta C. \]
+\end{definition}
+
+\begin{note}{BLAS}
+    BLAS (Basic Linear Algebra Subprograms) è una libreria standardizzata che fornisce un insieme di routine ottimizzate per operazioni di algebra lineare di base. 
+    BLAS è suddiviso in tre livelli, ognuno dei quali copre operazioni di complessità crescente:
+    \begin{itemize}
+        \item (Level 1) Vector operations. Sono presenti in questo livello le operazioni tra vettori, come il prodotto scalare, l'addizione, lo scaling, il calcolo della norma.
+        \item (Level 2) Matrix-vector operations. Ad esempio, il prodotto matrice per vettore.
+        \item (Level 3) Matrix-matrix operations. Ad esempio, GEMM (GEneral Matrix-Matrix) \(C=\alpha AB + \beta C\), LU decomposition (decomposizione di una matrice in triangolare superiore, \(U\), e inferiore, \(L\)).
+    \end{itemize}
+
+    Le implementazioni di BLAS (cuBLAS, rocBLAS, OpenBLAS, IntelMKL, BLIS) sono altamente ottimizzate per l'architettura per cui vengono sviluppate, il che le rende il punto di partenza per librerie più avanzate come LAPACK (Linear Algebra PACKage) e scaLAPACK (la versione parallela).
+\end{note}
+
+I tensor core velocizzano la GEMM mediante l'uso di \keyword{mixed precision}: riducendo la precisione degli ingressi \(A,B\) (e.g., da FP32 a FP16), viene ridotto anche il numero di accessi alla memoria, mentre la precisione per la matrice in uscita \(C\) rimane invariata (e.g., FP32).
+La mixed precision fa aumentare l'errore di approssimazione del risultato, ma ciò è pienamente accettabile nel calcolo delle reti neurali. 
+
+\begin{center}
+    \begin{table}
+    \caption{I principali formati a bassa precisione.}
+    \begin{tabular}{lcccc}
+    \hline
+    \textbf{Formato} & \textbf{Bit totali} & \textbf{Bit esponente} & \textbf{Bit mantissa} & \textbf{Note} \\
+    \hline
+    FP32 & 32 & 8 & 23 & Singola precisione standard \\
+    TF32 & 19 & 8 & 10 & Tensor Float 32 (Ampere+) \\
+    BF16 & 16 & 8 & 7 & Brain Float 16 \\
+    FP16 & 16 & 5 & 10 & Mezza precisione standard \\
+    FP8 (E4M3) & 8 & 4 & 3 & Precisione ridotta (Hopper+) \\
+    FP8 (E5M2) & 8 & 5 & 2 & Precisione ridotta (Hopper+) \\
+    \hline
+    \end{tabular}
+    \end{table}
+\end{center}
+
+Per definizione, un \keyword{tensor core} è un'unità hardware specializzata che esegue una GEMM, nella forma \(D = AB + C\), su piccoli tile.
+La GEMM viene calcolata in cooperazione tra i thread dello stesso warp, mediante primitive a livello del warp, come ad esempio il warp shuffle visto nelle sezioni precedenti.
+L'esatto modo con cui la cooperazione avvenga non è noto allo sviluppatore.
+Ciò consente al compilatore di utilizzare le istruzioni più adatte all'architettura sottostante.
+
+\begin{example}{Volta V100}
+    Ad esempio, nella Volta V100 --- l'architettura Volta è stata la prima ad implementare i tensor core ---, vi sono 8 tensor core per SM e ciascun tensor core esegue una GEMM con tile di dimensione \(4\times 4\times 4\). 
+    Un warp combina più tensor core per eseguire una GEMM più grande di dimensione \(16\times 16\times 16\).
+\end{example}
+
+\subsection{WMMA C++ API}
+CUDA fornisce l'API WMMA (Warp Matrix Multiply Add), che espone nel namespace \texttt{nvcuda::wmma} le seguenti operazioni:
+\begin{itemize}
+    \item \texttt{load\_matrix\_sync(...)} carica un tile dalla memoria ai registri del warp;
+    \item \texttt{mma\_sync(...)} esegue la GEMM sul tile;
+    \item \texttt{store\_matrix\_sync(...)} scrive il risultato dai registri del warp alla memoria.
+\end{itemize}
+
+Un tile viene distribuito tra i registri di un warp in modo \emph{opaco}. Il concetto di tile distribuito viene rappresentato nell'astrazione dell'API con la classe \texttt{Fragment}. Un oggetto \texttt{Fragment} può assumere il ruolo di \texttt{matrix\_a} (la matrice \(A\) della GEMM nell'ultima forma mostrata), \texttt{matrix\_b} (\(B\) nella GEMM) o \texttt{accumulator} (\(C\) nella GEMM).
+Oltre al ruolo, un oggetto \texttt{Fragment} ha una forma (e.g., \(16\times 16\times 16\)), un formato (e.g. \texttt{float16}) ed un layout (e.g., row-major).
+
+\begin{lstlisting}[
+    language=C++,
+    caption={Esempio di GEMM con Tensor Core mediante WMMA API.}
+]
+#include <mma.h>
+
+using namespace nvcuda;
+
+#define TILE_M 16
+#define TILE_N 16
+#define TILE_K 16
+
+__global__ void wmma_gemm(const half *A, const half *B, 
+                          float *C, int M, int N, int K) {
+    // Dichiarazione dei tile
+    wmma::fragment<wmma::matrix_a, TILE_M, TILE_N, TILE_K, 
+                   half, wmma::row_major> a_frag;
+    wmma::fragment<wmma::matrix_b, TILE_M, TILE_N, TILE_K, 
+                   half, wmma::col_major> b_frag;
+    wmma::fragment<wmma::accumulator, TILE_M, TILE_N, TILE_K, 
+                   float> c_frag;
+
+    // Inizializzazione del tile accumulatore
+    wmma::fill_fragment(c_frag, 0.0f);
+
+    // Indici del blocco
+    int block_row = blockIdx.y * TILE_M;
+    int block_col = blockIdx.x * TILE_N;
+
+    for (int k = 0; k < K; k += TILE_K) {
+        // Carica i tile di A e B dalla memoria globale
+        wmma::load_matrix_sync(a_frag, A + block_row * K + k, K);
+        wmma::load_matrix_sync(b_frag, B + k * N + block_col, N);
+
+        // Esegue la GEMM tra i tile
+        wmma::mma_sync(c_frag, a_frag, b_frag, c_frag);
+    }
+
+    // Scrive il risultato nella matrice C
+    wmma::store_matrix_sync(C + block_row * N + block_col, 
+                            c_frag, N, wmma::mem_row_major);
+}
+\end{lstlisting}
+
+\begin{warning}{}
+    È di cruciale importanza iterare le GEMM tra i tile sull'indice \texttt{k} per calcolare un tile completo della matrice risultante \(C\).
+    Infatti, consideriamo di voler calcolare \(C = A\cdot B\), con \(A, B, C\) di dimensione \(4 \times 4\) e con tile di dimensione \(2 \times 2\).
+    
+    Partizioniamo le matrici in tile \(2\times 2\):
+    \[
+    A = \begin{pmatrix}
+    A_{00} & A_{01} \\
+    A_{10} & A_{11}
+    \end{pmatrix}, \quad
+    B = \begin{pmatrix}
+    B_{00} & B_{01} \\
+    B_{10} & B_{11}
+    \end{pmatrix}, \quad
+    C = \begin{pmatrix}
+    C_{00} & C_{01} \\
+    C_{10} & C_{11}
+    \end{pmatrix}
+    \]
+    dove ogni blocco \(A_{ij}, B_{ij}, C_{ij}\) è un tile \(2\times 2\).
+    
+    Per la regola del prodotto a blocchi, il tile \(C_{00}\) è dato da:
+    \[
+    C_{00} = A_{00}B_{00} + A_{01}B_{10}
+    \]
+    
+    Se calcolassimo soltanto \(A_{00}B_{00}\), otterremmo:
+    \[
+    A_{00}B_{00} = \begin{pmatrix}
+    a_{00} & a_{01} \\
+    a_{10} & a_{11}
+    \end{pmatrix}
+    \begin{pmatrix}
+    b_{00} & b_{01} \\
+    b_{10} & b_{11}
+    \end{pmatrix}
+    =
+    \begin{pmatrix}
+    a_{00}b_{00} + a_{01}b_{10} & a_{00}b_{01} + a_{01}b_{11} \\
+    a_{10}b_{00} + a_{11}b_{10} & a_{10}b_{01} + a_{11}b_{11}
+    \end{pmatrix}
+    \]
+    che non corrisponde al tile completo \(C_{00}\), il quale richiede anche il contributo di \(A_{01}B_{10}\):
+    \[
+    \begin{aligned}
+    C_{00} &= A_{00}B_{00} + A_{01}B_{10} \\
+        &= 
+    \begin{pmatrix}
+    a_{00}b_{00} + a_{01}b_{10} & a_{00}b_{01} + a_{01}b_{11} \\
+    a_{10}b_{00} + a_{11}b_{10} & a_{10}b_{01} + a_{11}b_{11}
+    \end{pmatrix}
+    +
+    \begin{pmatrix}
+    a_{02}b_{20} + a_{03}b_{30} & a_{02}b_{21} + a_{03}b_{31} \\
+    a_{12}b_{20} + a_{13}b_{30} & a_{12}b_{21} + a_{13}b_{31}
+    \end{pmatrix}
+    \end{aligned}
+    \]
+    
+    In generale, per calcolare il tile \(C_{ij}\) di una matrice partizionata in tile di dimensione \(T \times T\), è necessario sommare i prodotti di tutti i tile della riga \(i\) di \(A\) con i corrispondenti tile della colonna \(j\) di \(B\):
+    \[
+    C_{ij} = \sum_{k} A_{ik} B_{kj}
+    \]
+    dove \(k\) itera su tutti i blocchi lungo la dimensione interna \(K\). Questo è esattamente il motivo per cui l'algoritmo mostrato itera su \texttt{k} accumulando i risultati parziali nel frammento accumulatore \texttt{c\_frag} tramite \texttt{wmma::mma\_sync}.
+\end{warning}
+
