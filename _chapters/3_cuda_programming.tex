@@ -529,9 +529,11 @@ pitch = pitch / sizeof(float);
 Quando una matrice viene allocata sul device con padding, conviene utilizzare la funzione \texttt{cudaMemcpy2D}, che gestisce automaticamente la trasformazione della matrice tra la sua versione con padding e la sua versione senza padding.
 
 Se la matrice è allocata in due dimensioni, si usa, per semplicità, suddividere la matrice su un blocco bidimensionale. 
-In tal caso, si potrebbe pensare di utilizzare \texttt{threadIdx.x} come indice di riga, \(i\), in quanto primo indice, e \texttt{threadIdx.y} come indice di colonna, \(j\), ma ciò non è affatto conveniente: supponendo che la dimensione di un settore sia \(32\) byte, i due thread \((i,j)\) e \((i,j+1)\), per matrici sufficientemente grandi (i.e., con un numero di colonne \(\geq 32\)), non apparterrebbero allo stesso settore, non permettendo un accesso coalesced. 
+In tal caso, si potrebbe pensare di utilizzare \texttt{threadIdx.x} come indice di riga \(i\) e \texttt{threadIdx.y} come indice di colonna \(j\), ma ciò non è affatto conveniente: CUDA serializza i blocchi facendo correre più velocemente \texttt{threadIdx.x}, poi \texttt{threadIdx.y}, poi \texttt{threadIdx.z}. 
+Ciò significa che se la matrice è \(2\times 2\), allora la sequenza degli indici \((i,j)\) sarà \((0,0),(1,0),(0,1),(1,1)\) (dunque column-major), invece di \((0,0),(0,1),(1,0),(1,1)\) (row-major).
+Assumendo che i settori abbiano dimensione di \(32\) byte e che la matrice sia tale per cui un elemento in posizione \((i,j)\) sia distante più di \(32\) byte dall'elemento \((i+1,j)\), i due elementi non apparterrebbero allo stesso settore, non permettendo un accesso coalesced non avendo rispettato la condizione (a).
+In ogni caso, con una tale serializzazione degli indici \(i,j\), non si verificherebbe mai un accesso ad elementi contigui in memoria, non rispettando la condizione (b) per l'accesso coalesced.
 Invece, usare \(threadIdx.y\) come indice di riga e \(threadIdx.x\) come indice di colonna permette un accesso coalesced.
-Ciò avviene perché si ricorda che CUDA serializza i blocchi facendo correre più velocemente \texttt{threadIdx.x}, poi \texttt{threadIdx.y}, poi \texttt{threadIdx.z}.
 
 \begin{note}{}
     Per ricordare il mapping favorevole, vedere \texttt{threadIdx.x} come l'ascissa, \texttt{threadIdx.y} come l'ordinata, \texttt{threadIdx.z} come la profondità. 
