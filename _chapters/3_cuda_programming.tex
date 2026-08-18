@@ -1082,3 +1082,142 @@ __global__ void wmma_gemm(const half *A, const half *B,
     dove \(k\) itera su tutti i blocchi lungo la dimensione interna \(K\). Questo è esattamente il motivo per cui l'algoritmo mostrato itera su \texttt{k} accumulando i risultati parziali nel frammento accumulatore \texttt{c\_frag} tramite \texttt{wmma::mma\_sync}.
 \end{warning}
 
+\subsection{cuTile}
+\keyword{cuTile} è un DSL\footnote{Domain Specific Language} Python per la programmazione CUDA a livello di tile.
+Mentre l'API WMMA è un'estensione di CUDA C++ alla programmazione a livello dei tile, cuTile è radicalmente un cambio di paradigma: in cuTile si può ragionare solo per tile: 1) ciascun warp carica un tile; 2) viene effettuata l'operazione sul tile; 3) il tile viene salvato. 
+Inoltre, in cuTile, la gestione dei warp è del tutto trasparente: i kernel lavorano direttamente sui tile.
+
+Il cambio di paradigma, prima dai kernel ai warp, poi dai warp ai tile, può essere fonte di confusione.
+Ad esempio, se nei classici kernel CUDA, il controllo dei thread ai \emph{bordi} avveniva mediante maschere come \texttt{if (i < m \&\& j < n)}\footnote{Questa maschera sta escludendo dalla computazione tutti i thread con \texttt{threadIdx.x} o \texttt{threadIdx.y} al di fuori dei bordi, assumendo che la griglia di lancio del kernel sia bidimensionale.}, in cuTile tale controllo va eseguito al livello dei tile: i tile \emph{ai bordi} potrebbero essere pieni o \emph{parziali}.
+Si osservano tile parziali quando la dimensione di un tile, \(T\), non è divisibile per la dimensione, \(N\), della matrice (o del vettore) da partizionare.
+Il numero di tile è dato da
+\[ \#\text{tile} = \left\lceil\frac{N}{T}\right\rceil. \]
+
+\noindent
+Consideriamo, adesso, l'implementazione di una GEMM in cuTile. 
+Supponiamo di avere due matrici \(A\) di dimensione \(M \times K\) e \(B\) di dimensione \(K \times N\), e di voler calcolare \(C = A \cdot B\) di dimensione \(M \times N\). 
+
+Definiamo una dimensione dei tile \(T = 128\) e supponiamo che \(M = 300\), \(N = 200\), \(K = 256\). In questo caso:
+\begin{itemize}
+    \item Per la dimensione \(M\): \(\lceil{300/128}\rceil = 3\) tile (gli ultimi \(300 - 2\cdot128 = 44\) elementi formano un tile parziale);
+    \item Per la dimensione \(N\): \(\lceil{200/128}\rceil = 2\) tile (gli ultimi \(200 - 128 = 72\) elementi formano un tile parziale);
+    \item Per la dimensione \(K\): \(\lceil{256/128}\rceil = 2\) tile (nessun tile parziale poiché \(256\) è divisibile per \(128\)).
+\end{itemize}
+
+Il codice cuTile per la GEMM è il seguente:
+\begin{lstlisting}[language=Python, caption={Implementazione GEMM in cuTile}]
+import cutile as ct
+
+def _get_tile_indices(
+    bid: int,
+    M: int,
+    N: int,
+    TILE_M: int,
+    TILE_N: int
+) -> tuple[int, int]:
+    """
+    Calcola gli indici di riga e colonna di un tile a partire dall'indice lineare.
+    
+    Args:
+        bid: Indice lineare del tile
+        M: Dimensione totale delle righe
+        N: Dimensione totale delle colonne
+        TILE_M: Dimensione del tile nelle righe
+        TILE_N: Dimensione del tile nelle colonne
+    
+    Returns:
+        tuple[int, int]: (bid_m, bid_n) - indici di riga e colonna del tile
+    """
+    num_tiles_m = ct.cdiv(M, TILE_M)
+    num_tiles_n = ct.cdiv(N, TILE_N)
+    
+    bid_m = bid // num_tiles_n  # indice di riga
+    bid_n = bid % num_tiles_n   # indice di colonna
+    
+    return bid_m, bid_n
+
+@ct.kernel
+def gemm_kernel(
+    A: ct.Tensor,  # (M, K)
+    B: ct.Tensor,  # (K, N)
+    C: ct.Tensor,  # (M, N)
+    M: ct.Constant[int],
+    N: ct.Constant[int],
+    K: ct.Constant[int],
+    TILE_M: ct.Constant[int] = 128,
+    TILE_N: ct.Constant[int] = 128,
+    TILE_K: ct.Constant[int] = 128,
+):
+""" Ogni blocco della griglia calcola un tile di C """
+
+# ct.bid(0) restituisce l'indice del tile (usiamo una griglia unidimensionale)
+bid = ct.bid(0)
+
+# Calcoliamo gli indici di riga e colonna corrispondenti all'indice lineare
+# del tile
+bid_m, bid_n = _get_tile_indices(bid, M, N, TILE_M, TILE_N)
+
+# Inizializziamo l'accumulatore per il tile di C
+acc = ct.full((TILE_M, TILE_N), 0.0, dtype=ct.float32)
+
+# Loop su k per calcolare il tile completo di C
+for k in range(ct.cdiv(K, TILE_K)):
+    # Carichiamo un tile di A e uno di B
+    # Usiamo padding_mode=ZERO per gestire automaticamente i bordi parziali
+    tile_A = ct.load(A, index=(bid_m, k), shape=(TILE_M, TILE_K), padding_mode=ct.PaddingMode.ZERO)
+    tile_B = ct.load(B, index=(k, bid_n), shape=(TILE_K, TILE_N), padding_mode=ct.PaddingMode.ZERO)
+    
+    # Moltiplicazione e accumulazione dei tile
+    # ct.mma esegue la moltiplicazione su Tensor Core
+    acc = ct.mma(tile_A, tile_B, acc)
+
+# Salviamo il tile di C calcolato
+# La scrittura gestisce automaticamente i bordi parziali
+ct.store(C, index=(bid_m, bid_n), tile=acc)
+\end{lstlisting}
+
+Il lancio del kernel avviene come segue:
+\begin{lstlisting}[language=Python, caption={Lancio del kernel}]
+# Dimensioni delle matrici
+M, K = 300, 256
+K, N = 256, 200
+
+# Creazione delle matrici su GPU
+A = torch.randn(M, K, device='cuda', dtype=torch.float32)
+B = torch.randn(K, N, device='cuda', dtype=torch.float32)
+C = torch.empty(M, N, device='cuda', dtype=torch.float32)
+
+# Calcolo del numero di blocchi
+TILE_M = TILE_N = 128
+num_tiles_m = (M + TILE_M - 1) // TILE_M
+num_tiles_n = (N + TILE_N - 1) // TILE_N
+grid = (num_tiles_m * num_tiles_n, 1, 1)
+
+# Lancio del kernel
+ct.launch(
+    torch.cuda.current_stream(),
+    grid,
+    gemm_kernel,
+    (A, B, C, M, N, K, TILE_M, TILE_N, TILE_K)
+)
+\end{lstlisting}
+
+L'esempio mostra alcune delle principali operazioni e parole chiave di cuTile.
+Il decoratore \texttt{@ct.kernel}, applicato ad una funzione Python, specifica al framework che quest'ultima è un kernel CUDA.
+Tra i parametri del kernel, si osservano due tipi: \texttt{ct.Tensor}, il tipo per rappresentare tensori sulla GPU, e \texttt{ct.Constant}, il tipo dei parametri passati al kernel che sono costanti durante l'esecuzione.
+Infine, descriviamo le operazioni:
+\begin{itemize}
+    \item \texttt{ct.cdiv} è la divisione intera per eccesso (ceil division);
+    \item \texttt{ct.full} crea un tile inizializzato con un valore costante;
+    \item \texttt{ct.load} carica un tile da un tensore, con gestione automatica dei bordi tramite \texttt{padding\_mode};
+    \item \texttt{ct.mma} esegue la moltiplicazione tra tile utilizzando i Tensor Core;
+    \item \texttt{ct.store} salva un tile in un tensore, gestendo automaticamente i bordi.
+\end{itemize}
+La gestione dei tile parziali avviene in modo trasparente: quando \texttt{ct.load} viene chiamato su un tile che eccede le dimensioni della matrice, il \texttt{padding\_mode=ZERO} garantisce che gli elementi mancanti siano considerati come zero. Analogamente, \texttt{ct.store} scrive solo gli elementi che rientrano nelle dimensioni effettive della matrice.
+
+\vspace{2mm}
+\noindent
+In definitiva, cuTile è un ecosistema ancora molto giovane e quindi dotato di una documentazione poco matura rispetto a CUDA C++, maggiore instabilità e driver molto stringenti (\(\geq\) 525). 
+Inoltre, la compatibilità con le diverse versioni di CUDA e Python non è sempre garantita, richiedendo spesso specifiche combinazioni di versioni.
+Nonostante queste limitazioni, cuTile rappresenta una direzione promettente per rendere la programmazione CUDA più accessibile e produttiva, specialmente per applicazioni che fanno ampio uso di operazioni su tile come il deep learning e il calcolo scientifico.
+
