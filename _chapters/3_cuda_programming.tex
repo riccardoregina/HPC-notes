@@ -951,25 +951,25 @@ La mixed precision fa aumentare l'errore di approssimazione del risultato, ma ci
     \end{table}
 \end{center}
 
-Per definizione, un \keyword{tensor core} è un'unità hardware specializzata che esegue una GEMM, nella forma \(D = AB + C\), su piccoli tile.
-La GEMM viene calcolata in cooperazione tra i thread dello stesso warp, mediante primitive a livello del warp, come ad esempio il warp shuffle visto nelle sezioni precedenti.
+Per definizione, un \keyword{tensor core} è un'unità hardware specializzata che esegue una MMA (Matrix Multiply Add), ovvero l'operazione \(D = AB + C\), su piccoli tile.
+La MMA viene calcolata in cooperazione tra i thread dello stesso warp, mediante primitive a livello del warp, come ad esempio il warp shuffle visto nelle sezioni precedenti.
 L'esatto modo con cui la cooperazione avvenga non è noto allo sviluppatore.
 Ciò consente al compilatore di utilizzare le istruzioni più adatte all'architettura sottostante.
 
 \begin{example}{Volta V100}
-    Ad esempio, nella Volta V100 --- l'architettura Volta è stata la prima ad implementare i tensor core ---, vi sono 8 tensor core per SM e ciascun tensor core esegue una GEMM con tile di dimensione \(4\times 4\times 4\). 
-    Un warp combina più tensor core per eseguire una GEMM più grande di dimensione \(16\times 16\times 16\).
+    Ad esempio, nella Volta V100 --- l'architettura Volta è stata la prima ad implementare i tensor core ---, vi sono 8 tensor core per SM e ciascun tensor core esegue una MMA con tile di dimensione \(4\times 4\times 4\). 
+    Un warp combina più tensor core per eseguire una MMA più grande di dimensione \(16\times 16\times 16\).
 \end{example}
 
 \subsection{WMMA C++ API}
 CUDA fornisce l'API WMMA (Warp Matrix Multiply Add), che espone nel namespace \texttt{nvcuda::wmma} le seguenti operazioni:
 \begin{itemize}
     \item \texttt{load\_matrix\_sync(...)} carica un tile dalla memoria ai registri del warp;
-    \item \texttt{mma\_sync(...)} esegue la GEMM sul tile;
+    \item \texttt{mma\_sync(...)} esegue la MMA sul tile;
     \item \texttt{store\_matrix\_sync(...)} scrive il risultato dai registri del warp alla memoria.
 \end{itemize}
 
-Un tile viene distribuito tra i registri di un warp in modo \emph{opaco}. Il concetto di tile distribuito viene rappresentato nell'astrazione dell'API con la classe \texttt{Fragment}. Un oggetto \texttt{Fragment} può assumere il ruolo di \texttt{matrix\_a} (la matrice \(A\) della GEMM nell'ultima forma mostrata), \texttt{matrix\_b} (\(B\) nella GEMM) o \texttt{accumulator} (\(C\) nella GEMM).
+Un tile viene distribuito tra i registri di un warp in modo \emph{opaco}. Il concetto di tile distribuito viene rappresentato nell'astrazione dell'API con la classe \texttt{Fragment}. Un oggetto \texttt{Fragment} può assumere il ruolo di \texttt{matrix\_a} (la matrice \(A\) della MMA nell'ultima forma mostrata), \texttt{matrix\_b} (\(B\) nella MMA) o \texttt{accumulator} (\(C\) nella MMA).
 Oltre al ruolo, un oggetto \texttt{Fragment} ha una forma (e.g., \(16\times 16\times 16\)), un formato (e.g. \texttt{float16}) ed un layout (e.g., row-major).
 
 \begin{lstlisting}[
@@ -1006,7 +1006,7 @@ __global__ void wmma_gemm(const half *A, const half *B,
         wmma::load_matrix_sync(a_frag, A + block_row * K + k, K);
         wmma::load_matrix_sync(b_frag, B + k * N + block_col, N);
 
-        // Esegue la GEMM tra i tile
+        // Esegue la MMA tra i tile
         wmma::mma_sync(c_frag, a_frag, b_frag, c_frag);
     }
 
@@ -1017,7 +1017,7 @@ __global__ void wmma_gemm(const half *A, const half *B,
 \end{lstlisting}
 
 \begin{warning}{}
-    È di cruciale importanza iterare le GEMM tra i tile sull'indice \texttt{k} per calcolare un tile completo della matrice risultante \(C\).
+    È di cruciale importanza iterare le MMA tra i tile sull'indice \texttt{k} per calcolare un tile completo della matrice risultante \(C\).
     Infatti, consideriamo di voler calcolare \(C = A\cdot B\), con \(A, B, C\) di dimensione \(4 \times 4\) e con tile di dimensione \(2 \times 2\).
     
     Partizioniamo le matrici in tile \(2\times 2\):
