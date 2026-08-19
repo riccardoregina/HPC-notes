@@ -1443,3 +1443,147 @@ Il double buffering è particolarmente utile quando:
     
 In sostanza, il double buffering consente di mantenere la pipeline piena senza richiedere un numero di stream pari al numero di chunk, riducendo l'overhead e l'utilizzo di memoria.
 
+\section{Multi-device}
+Per carichi ancor più elevati, un solo device diventa un grande limite. Disporre di più device consente banalmente di aumentare il parallelismo.
+Nei sistemi per l'HPC, ciascun nodo è dispone di più device e coopera con gli altri nodi mediante MPI (vedi appendice A).
+In ciascun nodo, è possibile sfruttare i device in due modi:
+\begin{itemize}
+    \item \keyword{Multi-thread}: thread distinti dell'host gestiscono un device ciascuno e comunicano mediante OpenMP o pthread;
+    \item \keyword{Multi-process}: processi distinti dell'host gestiscono un device ciascuno e comunicano mediante MPI.
+\end{itemize}
+
+Nel comunicare tra l'host (la CPU fisica, non l'host logico) e i device, il collo di bottiglia può risiedere nel bus PCIe: trasferimenti simultanei mediante il bus entrano in conflitto. Ciò può essere risolto dalla comunicazione device to device, resa possibile con NVLink\footnote{NVLink è una tecnologia di interconnessione sviluppata da NVIDIA che fornisce una connessione ad alta larghezza di banda e bassa latenza tra GPU, e tra GPU e CPU. A differenza del bus PCIe, NVLink consente trasferimenti diretti tra device senza passare attraverso l'host, riducendo significativamente i colli di bottiglia nelle comunicazioni multi-GPU.}.
+
+\subsection{Multi-thread}
+Consideriamo un esempio in cui si hanno a disposizione 4 device su un singolo nodo. Creiamo 4 thread con pthread, ricordando di effettuare il thread join alla fine. Ciascun thread seleziona il proprio device esclusivo mediante \code{cudaSetDevice()}:
+
+\begin{lstlisting}[language=C, caption={Esempio di multi-threading con 4 device CUDA}]
+#include <pthread.h>
+#include <cuda_runtime.h>
+
+#define NUM_THREADS 4
+
+void* thread_function(void* arg) {
+    int thread_id = *(int*)arg;
+    cudaSetDevice(thread_id);  // Ogni thread usa un device diverso
+    
+    // ... operazioni sul device assegnato ...
+    
+    return NULL;
+}
+
+int main() {
+    pthread_t threads[NUM_THREADS];
+    int thread_ids[NUM_THREADS];
+    
+    for (int i = 0; i < NUM_THREADS; i++) {
+        thread_ids[i] = i;
+        pthread_create(&threads[i], NULL, thread_function, &thread_ids[i]);
+    }
+    
+    for (int i = 0; i < NUM_THREADS; i++) {
+        pthread_join(threads[i], NULL);  // Attende il completamento
+    }
+    
+    return 0;
+}
+\end{lstlisting}
+
+Per visualizzare il guadagno rispetto ad un singolo thread, consideriamo le seguenti tabelle temporali. Ogni cella indica il job in esecuzione per un dato thread in un dato intervallo temporale.
+
+\begin{table}[H]
+\centering
+\caption{Caso con singolo thread}
+\begin{tabular}{|c|c|c|c|c|}
+\hline
+\textbf{Thread} & \textbf{t1} & \textbf{t2} & \textbf{t3} & \textbf{t4} \\
+\hline
+Thread 1 & Job 1 & Job 2 & Job 3 & Job 4 \\
+\hline
+\end{tabular}
+\end{table}
+
+\begin{table}[H]
+\centering
+\caption{Caso con quattro thread}
+\begin{tabular}{|c|c|c|c|c|}
+\hline
+\textbf{Thread} & \textbf{t1} & \textbf{t2} & \textbf{t3} & \textbf{t4} \\
+\hline
+Thread 1 & Job 1 & & & \\
+\hline
+Thread 2 & Job 2 & & & \\
+\hline
+Thread 3 & Job 3 & & & \\
+\hline
+Thread 4 & Job 4 & & & \\
+\hline
+\end{tabular}
+\end{table}
+
+Nel caso con singolo thread, i job vengono eseguiti sequenzialmente, mentre con quattro thread i job possono essere eseguiti in parallelo su device diversi, riducendo significativamente il tempo totale di esecuzione.
+
+\subsection{Multi-process}
+Adesso, supponiamo di avere a disposizione due nodi distribuiti, ciascuno dei quali con 4 device. Ogni processo MPI è un nodo multi-thread come quello visto nella sottosezione precedente. La struttura gerarchica è la seguente:
+
+\begin{itemize}
+    \item \keyword{Livello inter-nodo}: comunicazione mediante MPI tra i processi sui diversi nodi;
+    \item \keyword{Livello intra-nodo}: comunicazione mediante thread (pthread o OpenMP) all'interno di ciascun processo MPI, con ciascun thread che gestisce un device specifico.
+\end{itemize}
+
+\begin{lstlisting}[language=C, caption={Esempio di multi-process con MPI e multi-threading}]
+#include <mpi.h>
+#include <pthread.h>
+#include <cuda_runtime.h>
+
+#define NUM_THREADS 4
+#define NUM_DEVICES 4
+
+void* thread_function(void* arg) {
+    int thread_id = *(int*)arg;
+    int global_device = thread_id;  // Device locale al nodo
+    cudaSetDevice(global_device);
+    
+    // ... operazioni sul device assegnato ...
+    
+    return NULL;
+}
+
+int main(int argc, char** argv) {
+    MPI_Init(&argc, &argv);
+    
+    int rank, size;
+    MPI_Comm_rank(MPI_COMM_WORLD, &rank);
+    MPI_Comm_size(MPI_COMM_WORLD, &size);
+    
+    // Verifica che ci siano abbastanza device
+    int device_count;
+    cudaGetDeviceCount(&device_count);
+    if (device_count < NUM_DEVICES) {
+        printf("Errore: servono almeno %d device\n", NUM_DEVICES);
+        MPI_Abort(MPI_COMM_WORLD, 1);
+    }
+    
+    // Creazione dei thread per i device locali
+    pthread_t threads[NUM_THREADS];
+    int thread_ids[NUM_THREADS];
+    
+    for (int i = 0; i < NUM_THREADS; i++) {
+        thread_ids[i] = i;
+        pthread_create(&threads[i], NULL, thread_function, &thread_ids[i]);
+    }
+    
+    // Comunicazione MPI con altri nodi
+    // ... scambio dati tra processi ...
+    
+    for (int i = 0; i < NUM_THREADS; i++) {
+        pthread_join(threads[i], NULL);
+    }
+    
+    MPI_Finalize();
+    return 0;
+}
+\end{lstlisting}
+
+In questo schema, ogni processo MPI (uno per nodo) gestisce i propri 4 device mediante thread locali, mentre la comunicazione tra i nodi avviene esclusivamente mediante MPI. Questo approccio ibrido combina i vantaggi della comunicazione veloce intra-nodo (thread) con la scalabilità inter-nodo (MPI).
+
