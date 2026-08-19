@@ -1333,3 +1333,113 @@ In definitiva, cuTile è un ecosistema ancora molto giovane e quindi dotato di u
 Inoltre, la compatibilità con le diverse versioni di CUDA e Python non è sempre garantita, richiedendo spesso specifiche combinazioni di versioni.
 Nonostante queste limitazioni, cuTile rappresenta una direzione promettente per rendere la programmazione CUDA più accessibile e produttiva, specialmente per applicazioni che fanno ampio uso di operazioni su tile come il deep learning e il calcolo scientifico.
 
+\section{Device Pipelining}
+Per carichi di lavoro elevati, ovvero quando i dati da elaborare sono di dimensioni tali da non poter essere caricati interamente nella memoria del device, è necessario suddividere il carico in \keyword{chunk}. Per ciascun chunk, il flusso di lavoro richiede tre operazioni fondamentali:
+\begin{enumerate}
+    \item Trasferimento del chunk dall'host al device (H2D);
+    \item Esecuzione del kernel sul chunk;
+    \item Trasferimento del risultato dal device all'host (D2H).
+\end{enumerate}
+Se queste tre operazioni venissero eseguite sequenzialmente per ogni chunk, il costo totale di esecuzione sarebbe la somma dei tempi delle singole fasi:
+\[
+T_{\mathrm{tot}} = \sum_{i=1}^{C} \left( T_{\mathrm{h2d},i} + T_{\mathrm{k},i} + T_{\mathrm{d2h},i} \right)
+\]
+dove \(C\) è il numero di chunk. Questo approccio, seppur semplice, lascia il device inattivo durante i trasferimenti e lascia il canale di comunicazione inutilizzato durante l'esecuzione dei kernel.
+
+L'idea chiave del \keyword{pipelining} è sovrapporre l'esecuzione di operazioni indipendenti appartenenti a chunk diversi. In particolare, mentre il kernel elabora il chunk \(i\)-esimo, è possibile avviare il trasferimento H2D del chunk \((i+1)\)-esimo e, contestualmente, completare il trasferimento D2H del chunk \((i-1)\)-esimo, assumendo che le tre operazioni abbiano durata simile.
+Questa sovrapposizione è resa possibile in CUDA mediante l'uso degli \keyword{stream} e delle \keyword{operazioni asincrone}.
+
+\begin{definition}{CUDA Stream}
+    Un \keyword{CUDA stream} è una sequenza ordinata di operazioni che vengono eseguite nell'ordine esatto in cui sono dichiarate. Più stream possono essere eseguiti concorrentemente sullo stesso device, consentendo la sovrapposizione di trasferimenti e computazione.
+\end{definition}
+
+Per visualizzare il concetto di pipeline, si consideri una tabella in cui le righe rappresentano i diversi chunk e le colonne rappresentano il tempo. Ogni cella indica l'operazione in esecuzione per un dato chunk in un dato intervallo temporale.
+
+\begin{center}
+\begin{tabular}{|c|c|c|c|c|c|c|}
+\hline
+\textbf{Chunk} & \textbf{\(t_0\)} & \textbf{\(t_1\)} & \textbf{\(t_2\)} & \textbf{\(t_3\)} & \textbf{\(t_4\)} & \textbf{\(t_5\)} \\
+\hline
+1 & H2D & K & D2H & & & \\
+\hline
+2 & & H2D & K & D2H & & \\
+\hline
+3 & & & H2D & K & D2H & \\
+\hline
+4 & & & & H2D & K & D2H \\
+\hline
+\end{tabular}
+\end{center}
+Come si può osservare, l'operazione H2D del chunk 2 inizia non appena termina quella del chunk 1, senza attendere il completamento del kernel del chunk 1. Analogamente, il kernel del chunk 2 inizia quando il device si libera, sovrapponendosi al trasferimento D2H del chunk 1.
+
+Con il pipelining, il costo totale di esecuzione si riduce significativamente e può essere approssimato dalla formula:
+\[
+T_{\mathrm{tot}} \approx T_{\mathrm{h2d},1} + \sum_{i=2}^{C-1} \max\left\{ T_{\mathrm{h2d},i}, T_{\mathrm{k},i}, T_{\mathrm{d2h},i} \right\} + T_{\mathrm{d2h},C}
+\]
+ovvero, assumendo tempi uniformi per ogni chunk:
+\[
+T_{\mathrm{tot}} \approx T_{\mathrm{h2d}} + (C-2) \cdot \max\left\{ T_{\mathrm{h2d}}, T_{\mathrm{k}}, T_{\mathrm{d2h}} \right\} + T_{\mathrm{d2h}}
+\]
+
+\begin{note}{Perché \(\max\)?}
+    Il termine \(\max\left\{ T_{\mathrm{h2d}}, T_{\mathrm{k}}, T_{\mathrm{d2h}} \right\}\) rappresenta il collo di bottiglia della pipeline: poiché le tre operazioni di chunk diversi si sovrappongono, il tempo per completare un chunk (esclusi il primo e l'ultimo) è dominato dalla più lenta delle tre operazioni. Le altre due, essendo più veloci, possono essere nascoste dalla sovrapposizione.
+\end{note}
+
+\noindent
+Gli stream da soli non sono sufficienti ad ottenere il pipelining: la funzione \texttt{cudaMemcpy()} è \keyword{bloccante} per l'host. Se utilizzassimo \texttt{cudaMemcpy()}, l'host attenderebbe il completamento di ogni trasferimento prima di procedere, introducendo una latenza aggiuntiva e vanificando la sovrapposizione. 
+In una pipeline ben progettata, il sincronismo esplicito tra host e device è inutile: l'ordine e la correlazione tra le operazioni sono già garantiti dagli stream. 
+Si utilizza quindi \texttt{cudaMemcpyAsync()}, che restituisce immediatamente il controllo all'host, consentendo di accodare altre operazioni senza attese.
+
+\begin{example}{Pipelining con \(n\) stream per \(n\) chunk}
+    Consideriamo un semplice esempio in cui il numero di stream è uguale al numero di chunk. 
+    Ogni stream gestisce un singolo chunk, e le operazioni vengono accodate in un ciclo:
+    
+    \begin{lstlisting}[language=C, caption={Pipelining con \(n\) stream per \(n\) chunk}]
+// Creazione degli stream
+cudaStream_t streams[NUM_CHUNKS];
+for (int i = 0; i < NUM_CHUNKS; ++i) {
+    cudaStreamCreate(&streams[i]);
+}
+
+// Accodamento delle operazioni per ogni chunk
+for (int i = 0; i < NUM_CHUNKS; ++i) {
+    // Trasferimento H2D asincrono sullo stream i
+    cudaMemcpyAsync(d_chunk[i], h_chunk[i], 
+                    chunk_size, cudaMemcpyHostToDevice, 
+                    streams[i]);
+    
+    // Lancio del kernel sullo stream i
+    kernel<<<grid, block, 0, streams[i]>>>(d_chunk[i], ...);
+    
+    // Trasferimento D2H asincrono sullo stream i
+    cudaMemcpyAsync(h_result[i], d_result[i], 
+                    chunk_size, cudaMemcpyDeviceToHost, 
+                    streams[i]);
+}
+
+// Sincronizzazione finale: attende il completamento di tutti gli stream
+for (int i = 0; i < NUM_CHUNKS; ++i) {
+    cudaStreamSynchronize(streams[i]);
+    cudaStreamDestroy(streams[i]);
+}
+    \end{lstlisting}
+
+    Si noti che la sincronizzazione (tramite \code{cudaStreamSynchronize()}) viene eseguita \emph{solo alla fine} della pipeline, e non durante il ciclo di accodamento. 
+    Infatti, se sincronizzassimo ogni stream immediatamente dopo l'accodamento delle sue operazioni, bloccheremmo l'host in attesa del completamento di quel chunk, distruggendo la sovrapposizione tra chunk consecutivi.
+    Inoltre, la sincronizzazione finale non interferisce con l'esecuzione asincrona della pipeline.
+\end{example}
+
+\begin{warning}{Dipendenze tra chunk}
+    Il pipelining è possibile solo se i chunk sono \keyword{indipendenti} tra loro, ovvero se l'elaborazione del chunk \(i\)-esimo non richiede i risultati del chunk \((i-1)\)-esimo. 
+\end{warning}
+
+Quando il numero di chunk è maggiore del numero di stream, si può adottare la tecnica del \keyword{double buffering} (o multi-buffering). 
+In questo approccio, si creano \(n\) stream, dove \(n\) è tipicamente piccolo (ad esempio, 2 o 4), e si riutilizzano ciclicamente per elaborare tutti i chunk.
+Il double buffering è particolarmente utile quando:
+\begin{itemize}
+    \item Il numero di chunk è elevato e creare uno stream per chunk sarebbe inefficiente in termini di memoria e overhead di gestione;
+    \item Le risorse del device (memoria, registri) sono limitate, quindi non è possibile allocare buffer per tutti i chunk contemporaneamente.
+\end{itemize}
+    
+In sostanza, il double buffering consente di mantenere la pipeline piena senza richiedere un numero di stream pari al numero di chunk, riducendo l'overhead e l'utilizzo di memoria.
+
