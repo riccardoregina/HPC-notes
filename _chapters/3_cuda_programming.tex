@@ -973,12 +973,25 @@ printf("Elapsed CPU: %f s\n", elapsed);
     Altrimenti, non si misurerebbe il tempo di esecuzione del kernel, bensì il tempo di invio della richiesta d'esecuzione al device, poiché l'invocazione di un kernel è, dal punto di vista dell'host, asincrona.
 \end{note}
 
-\subsection{Buone pratiche}
+\subsection{Correttezza del risultato e Warm-up}
 In ogni approccio, è di cruciale importanza raccogliere più misurazioni e calcolare la media o la mediana di essi. Infatti, il tempo di esecuzione può variare a causa di fattori esterni (e.g. scheduling, cache).
 
-Per lo stesso motivo, è consigliato effettuare del riscaldamento, anche detto \keyword{warm-up}, prima dell'effettiva misurazione, cosicché la GPU vada a regime sin dalla prima misurazione.
+Per lo stesso motivo, è consigliato effettuare delle operazioni di \q{riscaldamento}, anche detto \keyword{warm-up}, prima dell'effettiva misurazione, cosicché la GPU si trovi a regime sin dalla prima misurazione.
 
-Inoltre, bisogna fare attenzione alle cifre significative, alla risoluzione, all'unità di misura della soluzione scelta.
+Quando si lavora con numeri in floating point, bisogna sempre fare attenzione agli errori dovuti all'arrotondamento.
+Infatti, non va richiesto che il risultato finale e il risultato atteso siano esattamente uguali, bensì che i due siano simili secondo una certa \keyword{tolleranza}.
+Supponiamo di aver calcolato un risultato \(x\) e di volerlo confrontare con il risultato atteso \(x^*\).
+Vi sono due tipi di tolleranza che ha senso introdurre: la tolleranza assoluta e la tolleranza relativa.
+La \keyword{tolleranza assoluta} \(t_{abs}\) è una soglia fissa che misura la differenza assoluta tra i risultati:
+\[ \abs{x - x^*} \leq t_{abs}. \]
+La \keyword{tolleranza relativa} \(t_{rel}\) è invece una soglia dinamica che misura il rapporto tra i risultati:
+\[ \frac{\abs{x - x^*}}{\abs{x^*}} \leq t_{rel}. \]
+La tolleranza relativa è dinamica perchè si adatta alla grandezza dei risultati confrontati: più i due risultati diventano grandi, più è l'errore consentito poichè \(t_{rel}\) è una percentuale.
+Tuttavia, spesso si adottano entrambe le tolleranze per un controllo più robusto:
+\[
+    \abs{x - x^*} \leq t_{abs} + t_{rel} \cdot \abs{x^*}.
+\]
+Questa condizione combina i vantaggi di entrambi gli approcci: la tolleranza assoluta garantisce un errore minimo accettabile anche quando \(x^*\) è molto piccolo (o nullo), mentre la tolleranza relativa scala la soglia in base alla grandezza del valore di riferimento, evitando che il test sia troppo stringente per numeri grandi.
 
 \subsection{CUDA Events}
 Se si vuole misurare la performance del kernel in isolamento, è necessario utilizzare l'API di CUDA per gli eventi.
