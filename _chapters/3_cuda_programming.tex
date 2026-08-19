@@ -656,6 +656,105 @@ Inoltre, per ogni colonna \(j\) fissata, al variare di \(i\) gli indici swizzlat
 
 Poichè usiamo, sia nella prima che nella seconda fase, la stessa funzione biettiva, \(s_i(j)\), il risultato, puntato da \code{At}, sarà perfettamente identico a quello ottenuto senza swizzling.
 
+\subsection{Il peso della memoria nell'HPC}
+In un modello di costo computazionale affidabile è necessario considerare i costi di accesso alla memoria, oltre che le operazioni aritmetiche. 
+Rendere efficiente l'accesso alla memoria mediante ottimizzazioni è cruciale per ottenere la migliore performance possibile sull'hardware a disposizione.
+Tuttavia, nell'HPC, a causa dell'enorme mole di dati con cui un algoritmo lavora, tali ottimizzazioni perdono parzialmente la loro efficacia.
+Possiamo modellare il costo di esecuzione di un algoritmo come:
+\[ T_{tot} = N_{mem}t_{mem} + N_{flop}t_{flop}. \]
+Chiamiamo \emph{performance} la quantità \(Perf := \frac{N_{flop}}{T_{tot}}\), che rappresenta il numero di operazioni aritmetiche eseguite per unità di tempo. La \emph{performance} è ideale quando tutto il tempo di esecuzione è impiegato per operazioni aritmetiche: gli accessi alla memoria non sono l'obiettivo principale di un algoritmo.
+Quindi, il caso ideale prevede \(t_{mem} = 0\), per cui si ottiene la \emph{peak performance}:
+\[ 
+    Perf^* = \frac{N_{flop}}{N_{flop}t_{flop}} = \frac{1}{t_{flop}}.
+\]
+
+\noindent
+Nel caso reale (\(t_{mem} > 0\)), si osserva:
+\[
+\begin{aligned}
+    Perf &=  \frac{N_{flop}}{N_{mem}t_{mem} + N_{flop}t_{flop}} \\
+    &= \frac{1/t_{flop}}{1 + \left(\frac{N_{mem}t_{mem}}{N_{flop}t_{flop}}\right)} && \text{molt. num. e den. per } \frac{1}{N_{flop}t_{flop}} \\
+    &= \frac{Perf^*}{1 + \left(\frac{N_{mem}t_{mem}}{N_{flop}t_{flop}}\right)}
+\end{aligned}
+\]
+dove \(N_{mem}t_{mem}/N_{flop}t_{flop}\) è detto \emph{fattore di decadimento} della performance, di cui \(q := N_{mem}/N_{flop}\) è la parte su cui è più semplice effettuare ottimizzazioni per avvicinarsi alla peak performance.
+Riscrivendo l'equazione di \(Perf\) con \(q\), si ottiene
+\[ Perf = \frac{Perf^*}{1 + q\left(\frac{t_{mem}}{t_{flop}}\right)}. \]
+Se \(q \approx t_{flop}/t_{mem}\), allora si ottiene la metà della peak performance.
+
+\begin{example}{}
+    Supponiamo di avere una CPU con frequenza \(f_{CPU} = 3 GHz\) e quindi un ciclo di clock che dura \(\text{cycle}_{CPU} = 1 / f_{CPU} = 0.33\cdot 10^{-9} s\).
+    Supponiamo che la CPU riesca ad eseguire \(4 flop\) durante ogni ciclo di clock. 
+    Allora, il tempo per eseguire una flop è \(t_{flop} = \text{cycle}_{CPU} / 4 = 0.0825 \cdot 10^{-9} s\).
+    Pertanto, la peak performance per il processore descritto è
+    \[ Perf^* = \frac{1 flop}{t_{flop}} \approx 12\cdot 10^{9} flop/s = 12 Gflops. \]
+    Supponiamo ora di avere una memoria RAM DDR4 con frequenza \(f_{RAM} = 1.6GHz\) e quindi con un ciclo di clock che dura \(\text{cycle}_{RAM} = 1 / 1.6 GHz = 0.625\cdot 10^{-9} s\). 
+    Supponendo che una lettura di un dato richieda \(16\) cicli della RAM, il tempo di accesso ad un dato è \(t_{mem} = 16\cdot \text{cycle}_{RAM} = 10\cdot 10^{-9} s\).
+    Adesso, possiamo calcolare il rapporto:
+    \[\frac{t_{mem}}{t_{flop}} \approx 121.2\]
+    Pertanto, per raggiungere la metà della peak performance, bisogna avere
+    \[q = \frac{N_{mem}}{N_{flop}} \approx \frac{1}{121.2}\]
+    e quindi osservare circa \(121\) flop per ogni accesso alla memoria, il che è molto difficile.
+\end{example}
+
+Un'ottimizzazione riguardante l'utilizzo di memoria consente al sistema un più alto riuso dei dati e quindi un minor numero di accessi alla memoria \(N_{mem}\), e quindi una performance migliore.
+Se il numero di accessi è già minimo, allora si cerca di sfruttare la cache, che consente l'accesso ai dati in un tempo inferiore di un ordine di grandezza rispetto alla RAM.
+In quest'ultimo caso, la performance viene migliorata grazie all'abbassamento di \(t_{mem}\).
+
+\begin{example}{Continuo dell'esempio precedente}
+    Ritornando all'esempio precedente, supponendo che la lettura di un dato dalla cache impieghi \(10\) cicli di clock \emph{della CPU}, si ha \(t_{mem} = 10 \cdot \text{clock}_{CPU} = 3.3\cdot 10^{-9} s\) e, quindi, il rapporto \(t_{mem}/t_{flop}\) sarà pari a circa \(40\).
+    Allora, per ottenere la metà della peak performance, si dovrà osservare
+    \[ q = \frac{N_{mem}}{N_{flop}} \approx \frac{1}{40} \]
+    e quindi vi dovranno essere \(40\) flop per ogni accesso alla memoria: molto meglio.
+\end{example}
+
+Una cache è suddivisa in \emph{cache line}s: quando viene richiesto un dato all'interno di una cache line, viene caricata per intero la cache line, secondo il \emph{principio di località della cache}.\footnote{Il principio di località della cache afferma che se viene eseguita un'operazione su un dato, allora è più probabile che la prossima operazione richiederà dati adiacenti rispetto a dati distanti.}
+Vediamo con un esempio i vantaggi di sfruttare il riuso di dati appartenenti alla stessa cache line: si consideri di dover calcolare una GEMM \(C = C + A\cdot B\) in linguaggio C con tre cicli innestati.
+Abbiamo bisogno di tre indici \(i,j,k\).
+\begin{lstlisting}[language=c]
+for (int ?1 = 0; ?1 < N; ++?1) {
+    for (int ?2 = 0; ?2 < N; ++?2) {
+        for (int ?3 = 0; ?3 < N; ++?3) {
+            C[i][j] = C[i][j] + A[i][k] * B[k][j];
+        }
+    }
+}
+\end{lstlisting}
+Sono possibili sei combinazioni di indici per la terna \texttt{?1, ?2, ?3}, e per ogni combinazione vi è ovviamente la stessa quantità di operazioni aritmetiche. A cambiare sono gli accessi alla memoria.
+
+Le permutazioni possibili degli indici sono sei.
+Consideriamo matrici quadrate di dimensione \(N\) tali per cui una riga riesca ad entrare per intero nella cache L1 della CPU.
+
+Analizziamo il numero di accessi per la permutazione \(i,j,k\): fissato un valore di \(i\) e \(j\), vi sarà un solo accesso ad \(A\), poichè la riga di \(A\) non cambierà per tutta l'iterazione del ciclo più esterno, due accessi a \(C\), uno in lettura all'inizio ed uno in scrittura alla fine dell'iterazione, \(N\) accessi a \(B\), poichè \(k\) è indice di riga per \(B\).
+Quindi, il numero di accessi alla memoria centrale per \(i,j,k\) è:
+\[ N_{mem} = N(N(2 + 1 + N)) = \BigO{N^3}. \]
+
+Facciamo la stessa analisi per la permutazione \(i,k,j\): fissato un valore per \(i\) e \(k\), si contano due accessi per \(C\) (come prima), un solo accesso ad \(A\), un solo accesso a \(B\).
+Quindi, il numero di accessi alla memoria centrale per \(i,k,j\) è:
+\[ N_{mem} = N(N(2 + 1 + 1)) = \BigO{N^2}. \]
+
+Pertanto, ci aspettiamo che la permutazione \(i,k,j\) sia molto più conveniente rispetto alla più classica \(i,j,k\). Verifichiamolo con un esperimento.
+
+\begin{example}{}
+    Consideriamo matrici \texttt{double} (otto byte) quadrate di dimensione \(N = 50\) e leading dimension \(L = 1500\). 
+    Pertanto, una riga logica occupa \(50 \cdot 8 = 400 byte\), mentre una riga fisica occupa \(12000 byte = 1.2 kbyte\).
+    L'esecuzione si è tenuta su un Intel Core i5 4460S, con frequenza 2.9 GHz con una peak performance di \(40 Gflop\) ciascuno dei suoi 4 core (ma ne useremo solo uno), su sistema operativo Ubuntu 16.
+    Ciascun core è dotato di una cache L1 di 64Kbyte.
+    Ciò significa che una riga delle matrici considerate riesce ad entrare per intero nella cache L1.
+    I risultati confermano i calcoli teorici precedenti:
+    \begin{itemize}
+        \item \((i,j,k)\): Perf = 1.45 Gflop
+        \item \((i,k,j)\): Perf = 1.13 Gflop
+        \item \((j,i,k)\): Perf = 5.57 Gflop
+        \item \((j,k,i)\): Perf = 1.83 Gflop
+        \item \((k,i,j)\): Perf = 5.43 Gflop
+        \item \((k,j,i)\): Perf = 1.90 Gflop
+    \end{itemize}
+    Tuttavia, all'aumentare della dimensione della matrice, \(N\), si osserva un degrado per tutte le combinazioni di indici.
+
+\end{example}
+L'esempio ci dice che, da un lato, l'ottimizzazione è meno efficace per valori grandi di \(N\), e che, dall'altro, scomporre una matrice grande in sottomatrici le cui righe rientrino in una cache line è un'ottima idea.
+
 \section{Occupancy}
 L'aspetto più importante per rendere efficiente un kernel è la memoria ed in particolare il suo utilizzo.
 Un algoritmo è detto \keyword{memory-bound} quando è limitato dalla latenza (o dalla banda) di memoria, mentre è detto \keyword{compute-bound} quando è limitato dalla potenza di calcolo.
