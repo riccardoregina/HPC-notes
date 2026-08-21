@@ -373,6 +373,7 @@
         drop fuzzy shadow,
         before skip=15pt plus 2pt,
         after skip=15pt plus 2pt,
+        breakable,
     },
     theoremboxwhite/.style={
         enhanced,
@@ -393,6 +394,7 @@
         drop fuzzy shadow,
         before skip=15pt plus 2pt,
         after skip=15pt plus 2pt,
+        breakable,
     }
 }
 
