@@ -1,0 +1,471 @@
+\chapter{OpenMP (Open Multi-Processing)}
+
+\keyword{OpenMP} (Open Multi-Processing) è un'API per il calcolo parallelo su architetture MIMD a \emph{memoria condivisa} (MIMD-SM). 
+Non è un linguaggio, ma un modello di programmazione basato su \keyword{direttive} al compilatore, routine di libreria e variabili d'ambiente. 
+È supportato nei linguaggi C, C++ e Fortran.
+Nulla impedisce di usare MPI su sistemi MIMD-SM. Tuttavia, perché non sfruttare le velocità che la memoria condivisa offre?
+
+\section{Concetti Fondamentali e Modello di Esecuzione}
+Un programma OpenMP inizia la sua esecuzione come un singolo processo con un singolo thread (il \keyword{master thread}). 
+Quando il thread incontra un costrutto parallelo, crea un \keyword{team} di thread, che eseguono il lavoro in parallelo. Questo modello è noto come \emph{fork-join}.
+
+\subsection{Direttive e Costrutti}
+In C/C++, le direttive OpenMP sono espresse con pragma\footnote{\texttt{pragma} è una direttiva del preprocessore che indica al compilatore di eseguire un'azione (difatti, \emph{pragma} è la radice greca di \emph{pragmatico}).}:
+\begin{lstlisting}[language=C, numbers=none]
+#pragma omp <directive> [clause[[,] clause]...]
+\end{lstlisting}
+
+Il costrutto fondamentale è la \keyword{parallel region}:
+\begin{lstlisting}[language=C, numbers=none]
+#include <omp.h>
+int main() {
+    /* Codice sequenziale eseguito dal master thread */
+
+    #pragma omp parallel
+    {
+        /* Codice parallelo eseguito da tutti i thread del team */
+        int id = omp_get_thread_num();
+        printf("Ciao dal thread %d\n", id);
+    }
+
+    /* Codice sequenziale: qui esiste solo il master thread */
+    return 0;
+}
+\end{lstlisting}
+
+\subsection{Compilazione ed Esecuzione}
+Per compilare un programma OpenMP con GCC, si utilizza il flag \texttt{-fopenmp}:
+\begin{lstlisting}[language=bash, numbers=none]
+gcc -fopenmp programma.c -o programma
+\end{lstlisting}
+Il numero di thread da utilizzare in una regione parallela può essere controllato tramite la variabile d'ambiente \texttt{OMP\_NUM\_THREADS}:
+\begin{lstlisting}[language=bash, numbers=none]
+export OMP_NUM_THREADS=4
+./programma
+\end{lstlisting}
+
+\section{Gestione dei Thread}
+All'interno di una regione parallela, ogni thread può ottenere il proprio identificativo e il numero totale di thread nel team tramite le funzioni di libreria.
+
+\subsection{Funzioni di Interrogazione}
+Le funzioni principali per interrogare l'ambiente di esecuzione sono:
+\begin{lstlisting}[language=C, numbers=none]
+/* Restituisce l'ID del thread chiamante (da 0 a N-1) */
+int omp_get_thread_num(void);
+
+/* Restituisce il numero totale di thread nel team corrente */
+int omp_get_num_threads(void);
+\end{lstlisting}
+
+È possibile anche controllare il numero di thread direttamente nel codice, anche se è generalmente sconsigliato in favore della variabile d'ambiente:
+\begin{lstlisting}[language=C, numbers=none]
+/* Imposta il numero di thread per le prossime regioni parallele */
+void omp_set_num_threads(int num_threads);
+\end{lstlisting}
+
+\section{Ripartizione del Lavoro}
+All'interno di una regione parallela, senza ulteriori direttive, il codice viene eseguito da \emph{tutti} i thread. 
+Per dividere il lavoro tra i thread, si usano i costrutti di \keyword{worksharing}.
+
+\subsection{Costrutto \texttt{for}}
+Il costrutto \texttt{for} divide le iterazioni di un loop tra i thread del team.
+\begin{lstlisting}[language=C, numbers=none]
+#pragma omp parallel
+{
+    #pragma omp for
+    for (int i = 0; i < N; i++) {
+        /* Ogni iterazione i è eseguita da un solo thread */
+        a[i] = b[i] * c[i];
+    }
+}
+\end{lstlisting}
+La forma combinata è equivalente e più compatta:
+\begin{lstlisting}[language=C, numbers=none]
+#pragma omp parallel for
+for (int i = 0; i < N; i++) {
+    a[i] = b[i] * c[i];
+}
+\end{lstlisting}
+
+\noindent
+La modalità con cui le iterazioni vengono assegnate ai thread è controllata dalla clausola \texttt{schedule}. 
+La clausola viene espressa come \texttt{schedule(<strategy>, chunk)}, che suddivide le iterazioni in blocchi di dimensione \texttt{chunk} e li distribuisce secondo \texttt{<strategy>}, i cui valori più frequenti sono:
+\begin{itemize}
+    \item \texttt{static}: I chunk vengono assegnati ai thread in modo round-robin \emph{prima} dell'esecuzione. Si ottiene il minimo overhead di sincronizzazione.
+    \item \texttt{dynamic}: I chunk vengono assegnati \emph{durante} l'esecuzione. Ogni thread che termina un blocco ne richiede un altro. Questa strategia di scheduling è utile per bilanciare carichi di lavoro non uniformi.
+    \item \texttt{guided}: Simile alla \texttt{dynamic}, ma la dimensione dei blocchi diminuisce nel tempo, partendo da un valore grande e riducendosi fino a \texttt{chunk}. Riduce l'overhead rispetto alla \texttt{dynamic} mantenendo un buon bilanciamento.
+\end{itemize}
+
+\subsection{Costrutto \texttt{sections}}
+Il costrutto \texttt{sections} permette di eseguire blocchi di codice indipendenti in parallelo, realizzando un parallelismo asimmetrico.
+\begin{lstlisting}[language=C, numbers=none]
+#pragma omp parallel
+{
+    #pragma omp sections
+    {
+        #pragma omp section
+        {
+            funzione_a(); /* Eseguita da un thread */
+        }
+        #pragma omp section
+        {
+            funzione_b(); /* Eseguita da un altro thread */
+        }
+    }
+}
+\end{lstlisting}
+
+\subsection{Costrutti \texttt{single} e \texttt{master}}
+Questi costrutti specificano che un blocco di codice deve essere eseguito da un solo thread.
+\begin{lstlisting}[language=C, numbers=none]
+#pragma omp parallel
+{
+    #pragma omp single
+    {
+        /* Eseguito da un solo thread del team.
+           Gli altri thread attendono qui (a meno di nowait). */
+        leggi_dati_da_file();
+    }
+
+    /* ... lavoro parallelo ... */
+}
+\end{lstlisting}
+
+\begin{lstlisting}[language=C, numbers=none]
+#pragma omp parallel
+{
+    #pragma omp master
+    {
+        /* Eseguito SOLO dal master thread.
+           Gli altri thread NON attendono qui. */
+        stampa_intestazione();
+    }
+
+    /* ... lavoro parallelo ... */
+}
+\end{lstlisting}
+
+\section{Sincronizzazione}
+La sincronizzazione è fondamentale per coordinare l'accesso ai dati condivisi e l'ordine di esecuzione tra i thread.
+
+\subsection{Barriere}
+Una barriera sincronizza tutti i thread del team: nessun thread può procedere oltre la barriera finché tutti non l'hanno raggiunta. Alla fine di un costrutto \texttt{for} o \texttt{sections} è presente una barriera implicita, che può essere rimossa con la clausola \texttt{nowait}.
+\begin{lstlisting}[language=C, numbers=none]
+#pragma omp parallel
+{
+    /* ... lavoro ... */
+
+    #pragma omp barrier /* Tutti i thread si sincronizzano */
+
+    /* ... altro lavoro ... */
+}
+\end{lstlisting}
+
+\subsection{Sezioni Critiche e Operazioni Atomiche}
+Per proteggere l'accesso a dati condivisi da \emph{data race}, si usano le sezioni critiche o le operazioni atomiche.
+\begin{lstlisting}[language=C, numbers=none]
+int contatore = 0;
+#pragma omp parallel
+{
+    #pragma omp critical
+    {
+        contatore++; // Accesso protetto
+    }
+
+    /* Alternativa più efficiente per operazioni semplici */
+    #pragma omp atomic
+    contatore++; // Traduzione diretta in istruzioni atomiche HW
+}
+\end{lstlisting}
+
+\subsection{Lock}
+I lock offrono un meccanismo di sincronizzazione più flessibile ma più complesso.
+\begin{lstlisting}[language=C, numbers=none]
+omp_lock_t lock;
+omp_init_lock(&lock);
+
+#pragma omp parallel
+{
+    /* ... lavoro non critico ... */
+
+    omp_set_lock(&lock);
+    /* ... accesso ai dati condivisi ... */
+    omp_unset_lock(&lock);
+
+    /* ... altro lavoro ... */
+}
+
+omp_destroy_lock(&lock);
+\end{lstlisting}
+
+\section{Condivisione dei Dati}
+In OpenMP, la gestione corretta della visibilità e della condivisione delle variabili è cruciale ed è spesso la principale fonte di errori.
+
+\subsection{Clausole di Data Sharing}
+Di default, le variabili definite \emph{prima} della regione parallela sono \texttt{shared}, mentre quelle definite \emph{dentro} (es. indici dei loop) siano \texttt{private}. 
+
+Una variabile può essere: 
+\begin{itemize}
+    \item \texttt{shared}: La variabile è condivisa tra tutti i thread del team: non viene creata nessuna copia locale ai thread. Pertanto, è importante fare attenzione a possibili race conditions;
+    \item \texttt{private}: Ogni thread ha la propria copia \emph{non inizializzata} della variabile. Al termine della regione parallela, il valore della variabile originale non risulta modificato. In altre parole, una variabile \texttt{private} è una variabile che, all'interno dello scope della regione parallela, maschera la variabile originale;
+    \item \texttt{firstprivate}: Ogni thread ha la propria copia della variabile, inizializzata con il valore che aveva prima della regione parallela. Al termine della regione parallela, il valore della variabile originale non risulta modificato;
+    \item \texttt{lastprivate}: Ogni thread ha la propria copia non inizializzata della variabile originale. Al termine della regione parallela, la variabile contiene l'ultimo valore assunto durante la regione parallela.
+\end{itemize}
+
+\noindent
+Quelle indicate sono dette clausole di \emph{data sharing} e vengono applicate a liste di variabili separate da virgole.
+Ad esempio, \texttt{private(a, b)} indica che le variabili \texttt{a, b} sono private nella regione parallela a cui la clausola è applicata.
+
+\begin{lstlisting}[language=C, numbers=none]
+int a = 1, b = 2, c = 3, i;
+#pragma omp parallel for private(i) firstprivate(a) lastprivate(b) shared(c)
+for (i = 0; i < N; i++) {
+    printf("a: %d", a); // Viene stampato "a: 1" per ogni thread
+
+    #pragma omp atomic
+    c += i;
+    
+    b = i;
+}
+printf("b: %d", b); /* Viene stampato l'ultimo valore che b ha assunto durante la regione parallela. Nota: questo potrebbe non essere N */
+\end{lstlisting}
+
+Inoltre, la direttiva \texttt{threadprivate} rende una variabile globale persistente e privata per ciascun thread tra diverse regioni parallele, mentre la clausola \texttt{copyin} inizializza le copie private di una variabile \texttt{threadprivate} con il valore che essa ha nel master thread all'ingresso della regione parallela.
+\begin{lstlisting}[language=C, numbers=none]
+int contatore_thread;
+#pragma omp threadprivate(contatore_thread)
+
+#pragma omp parallel copyin(contatore_thread)
+{
+    /* Ogni thread ha la sua copia di 'contatore_thread',
+       inizializzata al valore del master thread. */
+    contatore_thread = omp_get_thread_num();
+}
+
+/* In una regione parallela successiva, ogni thread ritrova il suo valore */
+#pragma omp parallel
+{
+    printf("Il mio contatore è %d\n", contatore_thread);
+}
+\end{lstlisting}
+
+\subsection{Clausola \texttt{reduction}}
+Per eseguire una riduzione tra i valori calcolati dai thread, vi è la clausola \texttt{reduction}, che richiede una variabile per l'accumulo dei risultati intermedi e un operatore, separati dai due punti (\texttt{:}).
+
+\begin{lstlisting}[language=C, numbers=none]
+#pragma omp parallel for reduction(op:variabile)
+for (int i = 0; i < N; i++) {
+    variabile = variabile op espressione;
+}
+\end{lstlisting}
+
+\subsubsection{Operatori Supportati}
+Gli operatori supportati dalla clausola \texttt{reduction} sono riportati in Tabella~\ref{tab:omp_reduction_ops}.
+
+\begin{table}[h!]
+\centering
+\caption{Operatori supportati dalla clausola \texttt{reduction} in OpenMP}
+\label{tab:omp_reduction_ops}
+\begin{tabular}{lll}
+\toprule
+Operatore & Tipo di dato & Valore iniziale \\
+\midrule
+\texttt{+} & Numerico & 0 \\
+\texttt{-} & Numerico & 0 \\
+\texttt{*} & Numerico & 1 \\
+\texttt{\&\&} & Logico & 1 (true) \\
+\texttt{||} & Logico & 0 (false) \\
+\texttt{\&} & Intero & \textasciitilde0 (tutti bit a 1) \\
+\texttt{|} & Intero & 0 \\
+\texttt{\^{}} & Intero & 0 \\
+\texttt{min} & Numerico & Valore massimo del tipo \\
+\texttt{max} & Numerico & Valore minimo del tipo \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+Ogni thread inizia la propria riduzione parziale con il \emph{valore neutro} dell'operatore (es. 0 per la somma, 1 per il prodotto). Questo garantisce che la combinazione finale dei risultati parziali sia corretta indipendentemente dal numero di thread.
+
+\begin{example}{}
+    Vediamo, in un solo esempio, la maggior parte degli operatori menzionati.
+    \begin{lstlisting}[language=C, numbers=none]
+int somma = 0;
+int prodotto = 1;
+int massimo = INT_MIN;
+int minimo = INT_MAX;
+int bitwise_or = 0;
+int logico_and = 1;
+
+#pragma omp parallel for reduction(+:somma) \
+        reduction(*:prodotto) \
+        reduction(max:massimo) \
+        reduction(min:minimo) \
+        reduction(|:bitwise_or) \
+        reduction(&&:logico_and)
+
+for (int i = 0; i < N; i++) {
+    somma += a[i];
+    prodotto *= a[i];
+    massimo = (a[i] > massimo) ? a[i] : massimo;
+    minimo = (a[i] < minimo) ? a[i] : minimo;
+    bitwise_or |= flags[i];
+    logico_and = logico_and && (a[i] > 0);
+}
+    \end{lstlisting}
+\end{example}
+
+\noindent
+È possibile definire operatori personalizzati tramite la direttiva \texttt{declare reduction}. La sintassi generale è:
+\begin{lstlisting}[language=C, numbers=none]
+#pragma omp declare reduction(identificatore : tipo : espressione) [initializer(espressione_iniziale)]
+\end{lstlisting}
+dove:
+\begin{itemize}
+    \item \texttt{identificatore} è il nome dell'operatore personalizzato;
+    \item \texttt{tipo} è il tipo di dato su cui opera la riduzione;
+    \item \texttt{espressione} indica come combinare due valori parziali. Può usare le variabili speciali \texttt{omp\_out} e \texttt{omp\_in}, che rappresentano rispettivamente l'accumulatore e il nuovo valore da combinare;
+    \item \texttt{initializer} è opzionale e specifica come inizializzare la variabile privata (\texttt{omp\_priv}) di ogni thread (default: costruttore di default del tipo).
+\end{itemize}
+
+\begin{example}{Operatore Personalizzato su Interi}
+    Supponiamo di voler definire un'operazione di riduzione personalizzata su interi a 32 bit che:
+    \begin{itemize}
+        \item applichi l'OR logico bit a bit sui 16 bit più significativi;
+        \item applichi l'AND logico bit a bit sui 16 bit meno significativi.
+    \end{itemize}
+    
+    \begin{lstlisting}[language=C, numbers=none]
+#pragma omp declare reduction(or_and : uint32_t : \
+    omp_out = ((omp_out | omp_in) & 0xFFFF0000) | \
+              ((omp_out & omp_in) & 0x0000FFFF)) \
+    initializer(omp_priv = 0x0000FFFF)
+    \end{lstlisting}
+
+    L'\texttt{initializer} imposta \texttt{omp\_priv} a \texttt{0x0000FFFF}: la parte alta è 0 (elemento neutro per l'OR) e la parte bassa è tutti 1 (elemento neutro per l'AND).
+    L'espressione di combinazione estrae le due metà e applica le rispettive operazioni:
+    \begin{itemize}
+        \item \texttt{(omp\_out | omp\_in) \& 0xFFFF0000}: OR sulla metà alta, poi maschera per isolare solo i bit alti;
+        \item \texttt{(omp\_out \& omp\_in) \& 0x0000FFFF}: AND sulla metà bassa, poi maschera per isolare solo i bit bassi.
+    \end{itemize}
+    
+    L'operatore potrà essere utilizzato in una clausola \texttt{reduction}:
+    \begin{lstlisting}[language=c]
+uint32_t or_and(uint32_t out, uint32_t in) {
+    return ((out | in) & 0xFFFF0000) | ((out & in) & 0x0000FFFF));
+}
+
+// ...
+
+uint32_t risultato;
+uint32_t dati[8] = { ... };
+
+risultato = 0x0000FFFF;
+
+#pragma omp parallel for reduction(or_and:risultato)
+for (int i = 0; i < 8; i++) {
+    risultato = or_and(risultato, dati[i]);
+}
+    \end{lstlisting}
+\end{example}
+
+Le riduzioni OpenMP sono generalmente molto efficienti: l'implementazione tipica prevede che ogni thread accumuli localmente nella propria variabile privata (massima località dei dati, nessuna sincronizzazione) e che solo alla fine i risultati parziali vengano combinati con un algoritmo ad albero (logaritmico nel numero di thread). 
+Per questo motivo, la riduzione è quasi sempre preferibile rispetto all'uso di sezioni critiche o operazioni atomiche per accumulare valori.
+
+\section{Tasking}
+Il tasking è un'estensione del modello fork-join che permette di parallelizzare problemi con strutture irregolari (es. liste concatenate, ricorsione).
+
+\subsection{Il costrutto \texttt{task}}
+Un task è un'unità di lavoro che può essere eseguita da un qualsiasi thread del team. Il thread che la genera (\emph{encountering thread}) può eseguirla subito o sospenderla per farla eseguire ad un altro thread.
+\begin{lstlisting}[language=C, numbers=none]
+#pragma omp parallel
+{
+    #pragma omp single
+    {
+        #pragma omp task
+        processa_nodo(root->left);
+
+        #pragma omp task
+        processa_nodo(root->right);
+
+        #pragma omp taskwait /* Attende il completamento dei task figli */
+    }
+}
+\end{lstlisting}
+
+Il costrutto \texttt{task} supporta inoltre diverse clausole utili:
+\begin{itemize}
+    \item \texttt{if(condizione)}: Se la condizione è falsa, il task viene eseguito immediatamente dal thread generante (undeferred task);
+    \item \texttt{final(condizione)}: Se la condizione è vera, i task figli vengono inclusi nel task corrente (final task);
+    \item \texttt{untied}: Il task può essere sospeso e ripreso da thread diversi;
+    \item \texttt{mergeable}: Il task può essere unito ad altri task per ridurre l'overhead;
+    \item \texttt{priority(valore)}: Assegna una priorità al task (valori più alti indicano priorità maggiore).
+\end{itemize}
+
+\subsection{Dipendenze tra Task}
+La clausola \texttt{depend} permette di specificare ordini di precedenza tra task basati sui dati, offrendo un controllo più fine di \texttt{taskwait}.
+\begin{lstlisting}[language=C, numbers=none]
+#pragma omp parallel
+{
+    #pragma omp single
+    {
+        #pragma omp task depend(out: a)
+        { a = 1; }
+
+        #pragma omp task depend(out: b)
+        { b = 2; }
+
+        #pragma omp task depend(in: a, b)
+        { c = a + b; } // Questo task partirà solo dopo i due precedenti
+    }
+}
+\end{lstlisting}
+
+I tipi di dipendenza sono:
+\begin{itemize}
+    \item \texttt{in}: Il task legge la variabile (dipendenza di lettura);
+    \item \texttt{out}: Il task scrive la variabile (dipendenza di scrittura);
+    \item \texttt{inout}: Il task legge e scrive la variabile (dipendenza di lettura-scrittura);
+    \item \texttt{mutexinoutset}: Il task accede alla variabile in mutua esclusione con altri task che usano la stessa clausola.
+\end{itemize}
+
+\section{Problemi Tipici}
+La programmazione OpenMP è decisamente più snella di quella MPI. Tuttavia, OpenMP presenta alcune sue peculiari insidie, di cui le \emph{data race} sono solo l'esempio più banale.
+
+\subsection{False Sharing}
+Il \keyword{false sharing} si verifica quando thread diversi modificano dati che, pur essendo logicamente indipendenti, risiedono fisicamente nella stessa \emph{cache line}. 
+Ciò causa una continua e silente invalidazione delle cache dei core.\footnote{Ciascun core è dotato di una propria cache.}
+Infatti, supponiamo di eseguire il seguente codice con 8 core e 8 thread e che una cache line abbia dimensione 64 byte.
+
+\begin{lstlisting}[language=C]
+const int num_threads = omp_get_num_threads(); // thread_num = 8
+double sum[num_threads]; // sum è un vettore di 8 double
+
+#pragma omp parallel for
+for (int i = 0; i < N; i++) {
+    sum[omp_get_thread_num()] += i;
+}
+\end{lstlisting}
+
+\noindent
+Poichè un \texttt{double} occupa 8 byte, l'intero vettore \texttt{sum} entra perfettamente in una cache line.
+Quando un thread modifica il suo elemento, invalida la cache line per gli altri core, che saranno costretti a caricare tale cache line dalla memoria.
+La soluzione è impiegare del padding, dimodochè ciascun elemento sia in una cache line diversa.
+
+\begin{lstlisting}[language=C]
+struct { double val; char pad[56]; } sum_padded[NUM_THREADS]; /* sum_padded è un vettore di num_threads elementi di tipo struct { double; char[56] } */
+
+#pragma omp parallel for
+for (int i = 0; i < N; i++) {
+    sum_padded[omp_get_thread_num()].val += i;
+}
+\end{lstlisting}
+
+\begin{note}{}
+    Il false sharing è un problema di prestazioni, non di correttezza.
+\end{note}
+
+\subsection{Oversubscription}
+L'\keyword{oversubscription} si verifica quando il numero di thread supera il numero di core logici disponibili sulla macchina. 
+Questo porta ad un aumento del \emph{context switching} e quindi ad un possibile degrado delle prestazioni. 
+Una buona pratica per contrastare il problema è assicurarsi che il numero di thread per l'esecuzione sia quello desiderato, controllando la variabile d'ambiente \texttt{OMP\_NUM\_THREADS} o invocando \texttt{omp\_set\_num\_threads()} all'interno del programma.
+
