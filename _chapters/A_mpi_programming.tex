@@ -1,9 +1,10 @@
 \chapter{MPI (Message-Passing Interface)} 
 
-\keyword{MPI} (Message-Passing Interface) è una specifica di interfaccia per librerie di message-passing, ideata per il modello di programmazione parallela in cui i dati vengono spostati dallo spazio di indirizzamento di un processo a quello di un altro mediante operazioni cooperative. MPI non è un linguaggio, ma tutte le sue operazioni sono espresse come funzioni o routine secondo i \textit{bindings} del linguaggio scelto (in questo caso, il C).
+\keyword{MPI} (Message-Passing Interface) è una specifica di interfaccia per librerie di message-passing, ideata per il modello di programmazione parallela per architetture MIMD a memoria distribuita (MIMD-DM).
+MPI non è un linguaggio, ma tutte le sue operazioni sono espresse come funzioni o routine secondo i \textit{bindings} del linguaggio scelto (in questo caso, il C).
 
 \section{Concetti Fondamentali e Inizializzazione}
-Un programma MPI consiste in un insieme di processi autonomi che eseguono il proprio codice in stile MIMD.
+Un programma MPI consiste in un insieme di processi autonomi che eseguono ciascuno i propri calcoli e che condividono tra loro i dati mediante comunicazioni inter-processo (IPC) fornite dalla libreria.
 
 \subsection{Inizializzazione e Chiusura}
 Esistono due modelli per avviare processi MPI: il \keyword{World Model} e il \keyword{Sessions Model}. Nel modello classico (World Model), l'ambiente viene inizializzato con \texttt{MPI\_Init} e terminato con \texttt{MPI\_Finalize}.
