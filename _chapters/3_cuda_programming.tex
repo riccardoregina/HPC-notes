@@ -1445,44 +1445,39 @@ In sostanza, il double buffering consente di mantenere la pipeline piena senza r
 
 \section{Multi-device}
 Per carichi ancor più elevati, un solo device diventa un grande limite. Disporre di più device consente banalmente di aumentare il parallelismo.
-Nei sistemi per l'HPC, ciascun nodo è dispone di più device e coopera con gli altri nodi mediante MPI (vedi appendice A).
+Nei sistemi per l'HPC, ciascun nodo dispone di più device e coopera con gli altri nodi mediante MPI (vedi appendice A).
 In ciascun nodo, è possibile sfruttare i device in due modi:
 \begin{itemize}
-    \item \keyword{Multi-thread}: thread distinti dell'host gestiscono un device ciascuno e comunicano mediante OpenMP o pthread;
+    \item \keyword{Multi-thread}: thread distinti dell'host gestiscono un device ciascuno e comunicano mediante OpenMP (vedi appendice B) o pthread;
     \item \keyword{Multi-process}: processi distinti dell'host gestiscono un device ciascuno e comunicano mediante MPI.
 \end{itemize}
 
-Nel comunicare tra l'host (la CPU fisica, non l'host logico) e i device, il collo di bottiglia può risiedere nel bus PCIe: trasferimenti simultanei mediante il bus entrano in conflitto. Ciò può essere risolto dalla comunicazione device to device, resa possibile con NVLink\footnote{NVLink è una tecnologia di interconnessione sviluppata da NVIDIA che fornisce una connessione ad alta larghezza di banda e bassa latenza tra GPU, e tra GPU e CPU. A differenza del bus PCIe, NVLink consente trasferimenti diretti tra device senza passare attraverso l'host, riducendo significativamente i colli di bottiglia nelle comunicazioni multi-GPU.}.
+Nel comunicare tra l'host (la CPU fisica, non l'host logico) e i device, il collo di bottiglia può risiedere nel bus PCIe: trasferimenti simultanei mediante il bus entrano in conflitto. Ciò può essere risolto dalla comunicazione device to device, resa possibile da NVLink\footnote{NVLink è una tecnologia di interconnessione sviluppata da NVIDIA che fornisce una connessione ad alta larghezza di banda e bassa latenza tra GPU, e tra GPU e CPU. A differenza del bus PCIe, NVLink consente trasferimenti diretti tra device senza passare attraverso l'host, riducendo significativamente i colli di bottiglia nelle comunicazioni multi-GPU.}.
 
 \subsection{Multi-thread}
-Consideriamo un esempio in cui si hanno a disposizione 4 device su un singolo nodo. Creiamo 4 thread con pthread, ricordando di effettuare il thread join alla fine. Ciascun thread seleziona il proprio device esclusivo mediante \code{cudaSetDevice()}:
+Consideriamo un esempio in cui si hanno a disposizione 4 device su un singolo nodo. Creiamo 4 thread con OpenMP. Ciascun thread seleziona il proprio device esclusivo mediante \code{cudaSetDevice()}:
 
-\begin{lstlisting}[language=C, caption={Esempio di multi-threading con 4 device CUDA}]
-#include <pthread.h>
+\begin{lstlisting}[language=C, caption={Esempio di multi-threading con 4 device CUDA tramite OpenMP}]
+#include <omp.h>
 #include <cuda_runtime.h>
 
 #define NUM_THREADS 4
 
-void* thread_function(void* arg) {
-    int thread_id = *(int*)arg;
-    cudaSetDevice(thread_id);  // Ogni thread usa un device diverso
-    
-    // ... operazioni sul device assegnato ...
-    
-    return NULL;
-}
-
 int main() {
-    pthread_t threads[NUM_THREADS];
-    int thread_ids[NUM_THREADS];
-    
-    for (int i = 0; i < NUM_THREADS; i++) {
-        thread_ids[i] = i;
-        pthread_create(&threads[i], NULL, thread_function, &thread_ids[i]);
-    }
-    
-    for (int i = 0; i < NUM_THREADS; i++) {
-        pthread_join(threads[i], NULL);  // Attende il completamento
+    omp_set_num_threads(NUM_THREADS);
+    int device_count;
+    cudaGetDeviceCount(&device_count);
+
+    #pragma omp parallel
+    {
+        int thread_id = omp_get_thread_num();
+        cudaSetDevice(thread_id);
+        
+        printf("Thread %d: uso il device %d (totale device: %d)\n", 
+               thread_id, thread_id, device_count);
+
+        // ... operazioni sul device assegnato ...
+
     }
     
     return 0;
@@ -1524,30 +1519,13 @@ Thread 4 & Job 4 & & & \\
 Nel caso con singolo thread, i job vengono eseguiti sequenzialmente, mentre con quattro thread i job possono essere eseguiti in parallelo su device diversi, riducendo significativamente il tempo totale di esecuzione.
 
 \subsection{Multi-process}
-Adesso, supponiamo di avere a disposizione due nodi distribuiti, ciascuno dei quali con 4 device. Ogni processo MPI è un nodo multi-thread come quello visto nella sottosezione precedente. La struttura gerarchica è la seguente:
+Adesso, supponiamo di avere a disposizione due nodi distribuiti, ciascuno dei quali con 4 device.
+Creiamo un processo MPI per ogni device a disposizione, dimodoché ciascun processo abbia accesso esclusivo al proprio device.
 
-\begin{itemize}
-    \item \keyword{Livello inter-nodo}: comunicazione mediante MPI tra i processi sui diversi nodi;
-    \item \keyword{Livello intra-nodo}: comunicazione mediante thread (pthread o OpenMP) all'interno di ciascun processo MPI, con ciascun thread che gestisce un device specifico.
-\end{itemize}
-
-\begin{lstlisting}[language=C, caption={Esempio di multi-process con MPI e multi-threading}]
+\begin{lstlisting}[language=C, caption={Esempio di multi-process con MPI}]
 #include <mpi.h>
-#include <pthread.h>
 #include <cuda_runtime.h>
-
-#define NUM_THREADS 4
-#define NUM_DEVICES 4
-
-void* thread_function(void* arg) {
-    int thread_id = *(int*)arg;
-    int global_device = thread_id;  // Device locale al nodo
-    cudaSetDevice(global_device);
-    
-    // ... operazioni sul device assegnato ...
-    
-    return NULL;
-}
+#include <stdio.h>
 
 int main(int argc, char** argv) {
     MPI_Init(&argc, &argv);
@@ -1556,28 +1534,55 @@ int main(int argc, char** argv) {
     MPI_Comm_rank(MPI_COMM_WORLD, &rank);
     MPI_Comm_size(MPI_COMM_WORLD, &size);
     
-    // Verifica che ci siano abbastanza device
+    // Ogni processo MPI usa un device locale al nodo
+    int local_rank = rank % 4;  // Assumendo 4 GPU per nodo
+    cudaSetDevice(local_rank);
+    
     int device_count;
     cudaGetDeviceCount(&device_count);
-    if (device_count < NUM_DEVICES) {
-        printf("Errore: servono almeno %d device\n", NUM_DEVICES);
-        MPI_Abort(MPI_COMM_WORLD, 1);
-    }
+    printf("Processo %d di %d: uso il device %d (totale device: %d)\n", 
+           rank, size, rank, device_count);
     
-    // Creazione dei thread per i device locali
-    pthread_t threads[NUM_THREADS];
-    int thread_ids[NUM_THREADS];
+    // ... operazioni sul device assegnato ...
     
-    for (int i = 0; i < NUM_THREADS; i++) {
-        thread_ids[i] = i;
-        pthread_create(&threads[i], NULL, thread_function, &thread_ids[i]);
-    }
+    MPI_Finalize();
+    return 0;
+}
+\end{lstlisting}
+
+\subsection{Approccio Ibrido}
+L'approccio ibrido combina i vantaggi del multi-threading e del multi-processing: si crea un processo MPI per ciascun nodo del cluster e, all'interno di ogni processo, si generano thread OpenMP, uno per ciascun device disponibile sul nodo. 
+Questo approccio consente di usare i vari livelli di parallelismo all'interno di un nodo: MPI gestisce la comunicazione tra nodi (attraverso la rete), mentre OpenMP gestisce il parallelismo all'interno del singolo nodo (attraverso la memoria condivisa). 
+L'approccio ibrido mira a ridurre l'overhead di comunicazione grazie alla shared memory, ma non è sempre la soluzione migliore.
+Ad esempio, l'approccio multi-process è concettualmente più semplice (e quindi meno prono ad errori) a causa della sua struttura piatta e al suo mapping uno a uno tra processi e device.
+
+\begin{lstlisting}[language=C, caption={Esempio di approccio ibrido MPI + OpenMP}]
+#include <mpi.h>
+#include <omp.h>
+#include <cuda_runtime.h>
+#include <stdio.h>
+
+int main(int argc, char** argv) {
+    MPI_Init(&argc, &argv);
     
-    // Comunicazione MPI con altri nodi
-    // ... scambio dati tra processi ...
+    int rank, size;
+    MPI_Comm_rank(MPI_COMM_WORLD, &rank);
+    MPI_Comm_size(MPI_COMM_WORLD, &size);
     
-    for (int i = 0; i < NUM_THREADS; i++) {
-        pthread_join(threads[i], NULL);
+    // Numero di device per nodo
+    int devices_per_node = 4;
+    omp_set_num_threads(devices_per_node);
+    
+    #pragma omp parallel
+    {
+        int thread_id = omp_get_thread_num();
+        int device_id = thread_id;  // device locale al nodo
+        cudaSetDevice(device_id);
+        
+        printf("Processo MPI %d di %d, thread %d: uso il device locale %d\n",
+               rank, size, thread_id, device_id);
+        
+        // ... operazioni sul device assegnato ...
     }
     
     MPI_Finalize();
@@ -1585,5 +1590,91 @@ int main(int argc, char** argv) {
 }
 \end{lstlisting}
 
-In questo schema, ogni processo MPI (uno per nodo) gestisce i propri 4 device mediante thread locali, mentre la comunicazione tra i nodi avviene esclusivamente mediante MPI. Questo approccio ibrido combina i vantaggi della comunicazione veloce intra-nodo (thread) con la scalabilità inter-nodo (MPI).
+\subsection{SLURM: Eseguire su Cluster}
+Eseguire un programma su un cluster per l'HPC non è immediato come su macchina personale: le risorse di un cluster sono condivise con altri utenti --- i quali sono sottoposti a limitazioni e politiche di accesso --- e organizzate secondo uno scheduler. 
+Insomma, su cluster, non si eseguono programmi, si sottomettono \keyword{job}.
+
+\keyword{SLURM} è uno scheduler e resource manager: riceve richieste di esecuzione su specifiche risorse e decide quando e dove allocarle, facendosi carico del ciclo di vita dei processi che vi accedono.
+Per sottomettere un job SLURM, è necessario il comando \texttt{sbatch}, che inserisce il job in coda. 
+Un job SLURM è uno script bash in cui si specificano tutte le risorse fisiche e le dipendenze software per l'esecuzione. 
+L'esecuzione del programma, all'interno del job, avviene mediante il comando \texttt{srun}.
+
+\begin{note}{Terminologia}
+    Un \emph{nodo} è un nodo del cluster. Un \emph{task} è un processo MPI. Un \emph{core} è un core della CPU su un nodo. Un \emph{rank} è l'identificatore di un processo MPI. Un \emph{device} è l'identificatore della GPU visibile al processo.
+\end{note}
+
+Le direttive \texttt{SBATCH} specificano le risorse richieste, mentre i comandi \texttt{module} agiscono sul sistema di \keyword{environment modules}.
+Tali operazioni modificano le variabili d'ambiente dell'utente per rendere disponibili versioni specifiche (o di default) delle dipendenze richieste, come compilatori, librerie MPI e toolkit CUDA. 
+Richiedere versioni specifiche è una buona pratica per garantire la riproducibilità e la stabilità di uno script SLURM, evitando sorprese dovute a cambiamenti nelle versioni di default.
+
+Vediamo, adesso, uno script SLURM per ciascuno dei tre approcci visti prima: multi-thread, multi-process, ibrido.
+
+\begin{lstlisting}[language=bash, caption={Script SLURM per approccio multi-thread (singolo nodo). In questo caso, poichè il programma esegue su un solo nodo, è possibile lanciare direttamente l'eseguibile, senza \texttt{srun}.}]
+#!/bin/bash
+#SBATCH --job-name=multi_thread
+#SBATCH --nodes=1
+#SBATCH --ntasks-per-node=1
+#SBATCH --cpus-per-task=4
+#SBATCH --gres=gpu:4
+#SBATCH --time=00:05:00
+#SBATCH --output=multi_thread_%j.out
+
+# Caricamento moduli
+module load cuda/12.0
+module load gcc/11.2.0
+
+# Esecuzione del programma
+./multi_thread_program
+\end{lstlisting}
+
+\begin{lstlisting}[language=bash, caption={Script SLURM per approccio multi-process (2 nodi, 8 task)}]
+#!/bin/bash
+#SBATCH --job-name=multi_process
+#SBATCH --nodes=2
+#SBATCH --ntasks-per-node=4
+#SBATCH --gres=gpu:4
+#SBATCH --time=01:00:00
+#SBATCH --output=multi_process_%j.out
+
+# Caricamento moduli
+module load cuda/12.0
+module load openmpi/4.1.4
+
+# Esecuzione del programma con MPI
+srun ./multi_process_program
+\end{lstlisting}
+
+\begin{lstlisting}[language=bash, caption={Script SLURM per approccio ibrido (2 nodi, 2 task MPI, 4 thread per task)}]
+#!/bin/bash
+#SBATCH --job-name=hybrid
+#SBATCH --nodes=2
+#SBATCH --ntasks-per-node=1
+#SBATCH --cpus-per-task=4
+#SBATCH --gres=gpu:4
+#SBATCH --time=01:00:00
+#SBATCH --output=hybrid_%j.out
+
+# Caricamento moduli
+module load cuda/12.0
+module load openmpi/4.1.4
+
+# Impostazione del numero di thread OpenMP per ciascun task
+export OMP_NUM_THREADS=4
+
+# Esecuzione del programma ibrido
+srun ./hybrid_program
+\end{lstlisting}
+
+\begin{warning}{}
+    La direttiva \texttt{\#SBATCH --gres=gpu:4} alloca 4 GPU per nodo. 
+    La distribuzione delle GPU tra i processi/thread dipende dall'implementazione: tipicamente ogni task vede tutte le GPU del nodo e deve selezionare esplicitamente quella desiderata con \texttt{cudaSetDevice()} o impostando la variabile \texttt{CUDA\_VISIBLE\_DEVICES}.
+\end{warning}
+
+Una volta sottomesso il job con \texttt{sbatch}, è possibile monitorare il suo stato con il comando SLURM \texttt{squeue -u \$USER}. 
+Per cancellare un job in coda o in esecuzione, si utilizza \texttt{scancel JOBID}. 
+Per mostrare informazioni dettagliate su job terminati, il comando \texttt{sacct -j JOBID} fornisce statistiche su tempo di esecuzione, memoria utilizzata e stato di uscita.
+
+\begin{warning}{}
+    Lo script SLURM è parte della documentazione di un esperimento: necessario per la riproducibilità. Conservare sempre lo script insieme ai risultati e al codice sorgente, specificando le versioni dei moduli e delle librerie utilizzate.
+\end{warning}
 
