@@ -96,383 +96,30 @@ MPI_Comm_size(MPI_Comm comm, int *size)
 \end{lstlisting}
 che restituiscono rispettivamente il rank del processo chiamante e il numero totale di processi nel comunicatore. Questi due valori sono sufficienti nella maggior parte dei programmi per determinare quale porzione di lavoro assegnare a ciascun processo.
 
-\section{Comunicazione Point-to-Point (P2P)} 
-La comunicazione tra due processi è il meccanismo base di MPI. Le operazioni fondamentali sono \keyword{send} (invio) e \keyword{receive} (ricezione). 
-
-\subsection{Operazioni bloccanti}
-Una \textit{blocking send} (\texttt{MPI\_Send}) non ritorna finché il buffer di invio non può essere riutilizzato in sicurezza. Una \textit{blocking receive} (\texttt{MPI\_Recv}) non ritorna finché i dati non sono stati ricevuti nel buffer di destinazione.
-
-\begin{lstlisting}[language=C, numbers=none]
-/*
- * Parameters:
- *  buf: address of send buffer
- *  count: number of elements in send buffer
- *  datatype: datatype of each send buffer element (handle)
- *  dest: rank of destination
- *  tag: message tag
- *  comm: communicator (handle)
- * 
- * Returns:
- *  an error code
- */
-int MPI_Send(const void *buf, int count,
-             MPI_Datatype datatype, int dest,
-             int tag, MPI_Comm comm)
-
-/*
- * Parameters:
- *  buf: address of receive buffer
- *  count: number of elements in receive buffer
- *  datatype: datatype of each receive buffer element (handle)
- *  source: rank of source or MPI_ANY_SOURCE
- *  tag: message tag or MPI_ANY_tag
- *  comm: communicator (handle)
- *  status: status object
- */
-int MPI_Recv(void *buf, int count, MPI_Datatype datatype,
-             int source, int tag, MPI_Comm comm,
-             MPI_Status *status)
-\end{lstlisting}
-
-Ad esempio, il seguente programma dimostra l'invio di un messaggio da parte del processo con rank \(0\) al processo con rank \(1\).
-\begin{lstlisting}[language=C, numbers=none]
-// Processo 0 invia a Processo 1
-if (myrank == 0) {
-    char msg = "Hello MPI";
-    MPI_Send(msg, 10, MPI_CHAR, 1, 99, MPI_COMM_WORLD);
-} else if (myrank == 1) {
-    char msg;
-    MPI_Recv(msg, 20, MPI_CHAR, 0, 99, MPI_COMM_WORLD, &status);
-}
-\end{lstlisting}
-
-Può risultare utile anche effettuare un invio ed una ricezione tra due processi mediante un'unica operazione.
-
-\begin{lstlisting}[language=C, numbers=none]
-/*
- * Parameters:
- *  sendbuf: address of send buffer
- *  sendcount: number of elements in send buffer
- *  sendtype: datatype of each send buffer element (handle)
- *  dest: rank of destination
- *  sendtag: send tag
- *  recvbuf: address of receive buffer
- *  recvcount: number of elements in receive buffer
- *  recvtype: datatype of each receive buffer element (handle)
- *  source: rank of source or MPI_ANY_SOURCE
- *  recvtag: message tag or MPI_ANY_tag
- *  comm: communicator (handle)
- *  status: status object
- * 
- * Returns:
- *  status code
- */
-int MPI_Sendrecv(const void *sendbuf, int sendcount,
-                 MPI_Datatype sendtype, int dest,
-                 int sendtag,
-                 void *recvbuf, int recvcount,
-                 MPI_Datatype recvtype, int source,
-                 int recvtag, MPI_Comm comm,
-                 MPI_Status *status)
-\end{lstlisting}
-
-\subsection{Semantica e Ordine}
-I messaggi sono \keyword{nonovertaking}: se un mittente invia due messaggi in successione alla stessa destinazione, il secondo non può superare il primo se entrambi corrispondono alla stessa operazione di ricezione.
-
-\subsection{Operazioni non bloccanti}
-Alle volte non è strettamente necessario che una comunicazione debba essere bloccante.
-In questi casi, è quasi sempre conveniente adoperare comunicazioni non bloccanti.
-
-Una \textit{non-blocking send} (\texttt{MPI\_Isend}) restituisce subito il controllo al chiamante e non aspetta che il messaggio venga recapitato. 
-Una \textit{non-blocking receive} (\texttt{MPI\_Irecv}) è una ricezione asincrona: il controllo è restituito immediatamente al chiamante senza attendere la ricezione del messaggio. 
-Le comunicazioni non bloccanti usano oggetti opachi, i \emph{request objects}, per identificare le operazioni e legare l'operazione che inizia la comunicazione con quella che la termina.
-
-\begin{lstlisting}[language=C, numbers=none]
-/*
- * Parameters:
- *  buf: address of send buffer
- *  count: number of elements in send buffer
- *  datatype: datatype of each send buffer element (handle)
- *  dest: rank of destination
- *  tag: message tag
- *  comm: communicator (handle)
- *  request: communication request (handle)
- * 
- * Returns:
- *  an error code
- */
-MPI_Isend(const void *buf, int count, MPI_Datatype datatype,
-          int dest, int tag, MPI_Comm comm,
-          MPI_Request *request)
-
-/*
- * Parameters:
- *  buf: address of receive buffer
- *  count: number of elements in receive buffer
- *  datatype: datatype of each receive buffer element (handle)
- *  source: rank of source or MPI_ANY_SOURCE
- *  tag: message tag or MPI_ANY_tag
- *  comm: communicator (handle)
- *  request: communication request (handle)
- * 
- * Returns:
- *  an error code
- */
-int MPI_Irecv(void *buf, int count, MPI_Datatype datatype,
-             int source, int tag, MPI_Comm comm,
-             MPI_Request *request)
-\end{lstlisting}
-
-Il \emph{request object} contiene informazioni sullo stato (e.g. pending) dell'operazione e la sua lettura è necessaria per accertare il completamento di un'operazione non bloccante.
-Le funzioni \texttt{MPI\_Wait} e \texttt{MPI\_Test} sono utilizzate con questo scopo.
-
-\begin{note}{}
-    Per completamento dell'operazione di invio si intende che il mittente può riutilizzare il buffer di invio con sicurezza.
-    Il destinatario potrebbe tuttavia non aver ancora ricevuto per intero il messaggio, residente nel sottosistema di comunicazione.
-    Per completamento dell'operazione di ricezione si intende che il messaggio è contenuto completamente nel buffer di ricezione.
-\end{note}
-
-\subsubsection{MPI\_Wait}
-\texttt{MPI\_Wait} blocca il processo chiamante fino al completamento dell'operazione associata alla request:
-\begin{lstlisting}[language=C, numbers=none]
-MPI_Wait(MPI_Request *request, MPI_Status *status)
-\end{lstlisting}
-Al termine, \texttt{request} viene impostata a \texttt{MPI\_REQUEST\_NULL} e \texttt{status} contiene le informazioni sul messaggio ricevuto (sorgente, tag, eventuale errore). Se tali informazioni non sono necessarie, è possibile passare \texttt{MPI\_STATUS\_IGNORE} al posto di \texttt{status}.
-
-Il pattern tipico consiste nell'avviare una comunicazione non bloccante, svolgere del lavoro indipendente in sovrapposizione, e poi attendere il completamento prima di accedere al buffer:
-\begin{lstlisting}[language=C, numbers=none]
-MPI_Request req;
-double buf[N];
-
-/* Avvia la ricezione non bloccante */
-MPI_Irecv(buf, N, MPI_DOUBLE, src, tag, MPI_COMM_WORLD, &req);
-
-/* Lavoro indipendente dal contenuto di buf */
-compute_something_else();
-
-/* Attende il completamento prima di usare buf */
-MPI_Wait(&req, MPI_STATUS_IGNORE);
-process(buf);
-\end{lstlisting}
-
-\subsubsection{MPI\_Test}
-\texttt{MPI\_Test} verifica se un'operazione è completata senza bloccare il processo:
-\begin{lstlisting}[language=C, numbers=none]
-MPI_Test(MPI_Request *request, int *flag, MPI_Status *status)
-\end{lstlisting}
-Se l'operazione è completata, \texttt{flag} viene impostato a un valore diverso da zero e \texttt{request} viene azzerata come in \texttt{MPI\_Wait}; altrimenti \texttt{flag} vale zero e \texttt{status} non è significativo.
-
-\texttt{MPI\_Test} è utile quando il processo ha più lavoro utile da svolgere e vuole completarlo prima di cedere il controllo alla libreria MPI:
-\begin{lstlisting}[language=C, numbers=none]
-MPI_Request req;
-double buf[N];
-int done = 0;
-
-MPI_Irecv(buf, N, MPI_DOUBLE, src, tag, MPI_COMM_WORLD, &req);
-
-while (!done) {
-    MPI_Test(&req, &done, MPI_STATUS_IGNORE);
-    /* Esegue un'iterazione di lavoro indipendente
-       ad ogni controllo */
-    do_work_increment();
-}
-
-process(buf);
-\end{lstlisting}
-
-\subsubsection{Varianti su insiemi di request}
-Quando si gestiscono più comunicazioni non bloccanti simultaneamente, usare \texttt{MPI\_Wait} o \texttt{MPI\_Test} su ciascuna request separatamente è inefficiente. MPI fornisce varianti che operano su array di request:
-
-\begin{itemize}
-    \item \texttt{MPI\_Waitall(int count, MPI\_Request *reqs, MPI\_Status *statuses)}: blocca fino al completamento di \emph{tutte} le operazioni nell'array;
-    \item \texttt{MPI\_Waitany(int count, MPI\_Request *reqs, int *index, MPI\_Status *status)}: blocca fino al completamento di \emph{almeno una} operazione, restituendone l'indice in \texttt{index};
-    \item \texttt{MPI\_Waitsome(int count, MPI\_Request *reqs, int *outcount, int *indices, MPI\_Status *statuses)}: blocca fino al completamento di \emph{almeno una} operazione e restituisce gli indici di tutte quelle già terminate al momento del ritorno.
-\end{itemize}
-Le corrispondenti varianti non bloccanti \texttt{MPI\_Testall}, \texttt{MPI\_Testany} e \texttt{MPI\_Testsome} hanno la stessa semantica ma ritornano immediatamente.
-
-Un caso d'uso comune è lo scambio di dati con i vicini in una griglia, seguito dall'attesa di tutte le comunicazioni prima di procedere al passo successivo:
-\begin{lstlisting}[language=C, numbers=none]
-MPI_Request reqs[4];
-double ghost_left[M], ghost_right[M];
-double ghost_up[M],   ghost_down[M];
-
-MPI_Irecv(ghost_left,  M, MPI_DOUBLE, left,  tag, cart_comm, &reqs[0]);
-MPI_Irecv(ghost_right, M, MPI_DOUBLE, right, tag, cart_comm, &reqs[1]);
-MPI_Isend(local_left,  M, MPI_DOUBLE, left,  tag, cart_comm, &reqs[2]);
-MPI_Isend(local_right, M, MPI_DOUBLE, right, tag, cart_comm, &reqs[3]);
-
-/* Calcola la parte interna del dominio, lontana dai bordi,
-   mentre le comunicazioni con i vicini avvengono in parallelo */
-compute_interior();
-
-/* Attende il completamento di tutte le comunicazioni
-   prima di aggiornare i bordi */
-MPI_Waitall(4, reqs, MPI_STATUSES_IGNORE);
-compute_boundary(ghost_left, ghost_right);
-\end{lstlisting}
-Si noti l'uso di \texttt{MPI\_STATUSES\_IGNORE} (plurale) al posto di \texttt{MPI\_STATUS\_IGNORE} quando si ignorano gli stati di un array di request.
-
-\section{Comunicazioni Collettive}
-Le operazioni collettive coinvolgono un gruppo di processi (definito da un comunicatore come \texttt{MPI\_COMM\_WORLD}).
-A differenza delle comunicazioni punto a punto, ogni processo del comunicatore deve invocare la stessa operazione collettiva. Le operazioni collettive sono implicitamente sincronizzanti: nessun processo può procedere oltre la chiamata finché tutti gli altri non l'hanno raggiunta.
-
-\subsection{Barriera}
-L'operazione più semplice è la barriera di sincronizzazione, che blocca ogni processo fino a quando tutti i membri del comunicatore non l'hanno raggiunta:
-\begin{lstlisting}[language=C, numbers=none]
-MPI_Barrier(MPI_Comm comm)
-\end{lstlisting}
-La barriera non trasferisce dati ed è tipicamente usata per sincronizzare le fasi di un programma, ad esempio per garantire che tutti i processi abbiano completato una scrittura su file prima che un altro inizi a leggere.
-
-\subsection{Broadcast}
-Il broadcast trasmette un messaggio da un processo radice (\emph{root}) a tutti gli altri processi del comunicatore:
-\begin{lstlisting}[language=C, numbers=none]
-MPI_Bcast(void *buffer, int count, MPI_Datatype datatype,
-          int root, MPI_Comm comm)
-\end{lstlisting}
-Il processo radice è l'unico a fornire dati significativi in \texttt{buffer}; al termine della chiamata, tutti i processi dispongono della stessa copia.
-
-Ad esempio, per distribuire un array di parametri letto dal processo 0:
-\begin{lstlisting}[language=C, numbers=none]
-double params[10];
-
-if (rank == 0) {
-    /* Solo il processo 0 legge i parametri da file */
-    read_parameters(params);
-}
-
-/* Tutti i processi ricevono la stessa copia di params */
-MPI_Bcast(params, 10, MPI_DOUBLE, 0, MPI_COMM_WORLD);
-\end{lstlisting}
-
-\subsection{Scatter e Gather}
-Lo scatter distribuisce porzioni distinte di un buffer dal processo radice a tutti i processi; il gather esegue l'operazione inversa, raccogliendo i contributi di ogni processo in un unico buffer sul radice.
-\begin{lstlisting}[language=C, numbers=none]
-MPI_Scatter(void *sendbuf, int sendcount, MPI_Datatype sendtype,
-            void *recvbuf, int recvcount, MPI_Datatype recvtype,
-            int root, MPI_Comm comm)
-
-MPI_Gather(void *sendbuf, int sendcount, MPI_Datatype sendtype,
-           void *recvbuf, int recvcount, MPI_Datatype recvtype,
-           int root, MPI_Comm comm)
-\end{lstlisting}
-\texttt{sendcount} indica il numero di elementi inviati a \emph{ciascun} processo (non il totale). Il buffer di invio deve quindi contenere almeno \texttt{sendcount * size} elementi, dove \texttt{size} è il numero di processi nel comunicatore.
-
-Ad esempio, per distribuire un vettore di \(N\) elementi e raccogliere i risultati dopo un'elaborazione locale:
-\begin{lstlisting}[language=C, numbers=none]
-int N = 8, size, rank;
-MPI_Comm_size(MPI_COMM_WORLD, &size);
-MPI_Comm_rank(MPI_COMM_WORLD, &rank);
-
-int chunk = N / size; /* elementi per processo */
-double *global = NULL;
-double local[chunk];
-
-if (rank == 0) {
-    global = malloc(N * sizeof(double));
-    for (int i = 0; i < N; i++) global[i] = (double)i;
-}
-
-MPI_Scatter(global, chunk, MPI_DOUBLE,
-            local,  chunk, MPI_DOUBLE,
-            0, MPI_COMM_WORLD);
-
-/* Elaborazione locale */
-for (int i = 0; i < chunk; i++) local[i] *= 2.0;
-
-MPI_Gather(local,  chunk, MPI_DOUBLE,
-           global, chunk, MPI_DOUBLE,
-           0, MPI_COMM_WORLD);
-
-if (rank == 0) free(global);
-\end{lstlisting}
-Quando le porzioni da distribuire hanno dimensioni diverse tra i processi, si utilizzano le varianti \texttt{MPI\_Scatterv} e \texttt{MPI\_Gatherv}, che accettano array di conteggi e displacement.
-
-\subsection{Allgather e Alltoall}
-\texttt{MPI\_Allgather} equivale a un gather seguito da un broadcast: ogni processo raccoglie i contributi di tutti gli altri, ottenendo alla fine lo stesso buffer completo.
-\begin{lstlisting}[language=C, numbers=none]
-MPI_Allgather(void *sendbuf, int sendcount, MPI_Datatype sendtype,
-              void *recvbuf, int recvcount, MPI_Datatype recvtype,
-              MPI_Comm comm)
-\end{lstlisting}
-
-\texttt{MPI\_Alltoall} realizza invece una trasposizione collettiva: ogni processo invia una porzione distinta a ciascun altro processo e riceve una porzione distinta da ciascuno. È l'operazione collettiva più generale in termini di traffico di rete ed è spesso il collo di bottiglia nelle applicazioni che richiedono una ridistribuzione globale dei dati, come la trasformata di Fourier parallela.
-\begin{lstlisting}[language=C, numbers=none]
-MPI_Alltoall(void *sendbuf, int sendcount, MPI_Datatype sendtype,
-             void *recvbuf, int recvcount, MPI_Datatype recvtype,
-             MPI_Comm comm)
-\end{lstlisting}
-
-\subsection{Riduzione}
-Le operazioni di riduzione combinano i valori forniti da tutti i processi tramite un operatore (es. somma, massimo) e depositano il risultato sul processo radice:
-\begin{lstlisting}[language=C, numbers=none]
-MPI_Reduce(void *sendbuf, void *recvbuf, int count,
-           MPI_Datatype datatype, MPI_Op op,
-           int root, MPI_Comm comm)
-\end{lstlisting}
-Gli operatori predefiniti più comuni sono riportati in Tabella~\ref{tab:mpi_op}.
-
-\begin{table}[h!]
-\centering
-\caption{Principali operatori predefiniti per \texttt{MPI\_Reduce}}
-\label{tab:mpi_op}
-\begin{tabular}{ll}
-\toprule
-Operatore & Operazione \\
-\midrule
-\texttt{MPI\_SUM}    & Somma \\
-\texttt{MPI\_PROD}   & Prodotto \\
-\texttt{MPI\_MAX}    & Massimo \\
-\texttt{MPI\_MIN}    & Minimo \\
-\texttt{MPI\_LAND}   & AND logico \\
-\texttt{MPI\_LOR}    & OR logico \\
-\texttt{MPI\_BAND}   & AND bit a bit \\
-\texttt{MPI\_BOR}    & OR bit a bit \\
-\texttt{MPI\_MAXLOC} & Massimo e indice del processo \\
-\texttt{MPI\_MINLOC} & Minimo e indice del processo \\
-\bottomrule
-\end{tabular}
-\end{table}
-
-Ad esempio, per calcolare la somma globale di un valore parziale calcolato da ciascun processo:
-\begin{lstlisting}[language=C, numbers=none]
-double local_sum = compute_partial_sum(rank);
-double global_sum = 0.0;
-
-MPI_Reduce(&local_sum, &global_sum, 1, MPI_DOUBLE,
-           MPI_SUM, 0, MPI_COMM_WORLD);
-
-if (rank == 0)
-    printf("Somma globale: %f\n", global_sum);
-\end{lstlisting}
-La variante \texttt{MPI\_Allreduce} distribuisce il risultato a tutti i processi anziché solo al radice, evitando un successivo broadcast:
-\begin{lstlisting}[language=C, numbers=none]
-MPI_Allreduce(&local_sum, &global_sum, 1, MPI_DOUBLE,
-              MPI_SUM, MPI_COMM_WORLD);
-\end{lstlisting}
-È inoltre possibile definire operatori personalizzati tramite \texttt{MPI\_Op\_create}, passando una funzione con la firma:
-\begin{lstlisting}[language=C, numbers=none]
-void my_op(void *in, void *inout, int *len, MPI_Datatype *type);
-\end{lstlisting}
-dove \texttt{inout} contiene il risultato parziale accumulato e deve essere aggiornato in-place combinandolo con \texttt{in}.
-
-\subsection{Scan}
-Lo scan (o riduzione prefissa) calcola riduzioni parziali: il processo \(i\) riceve il risultato della riduzione applicata ai contributi dei processi \(0, 1, \ldots, i\):
-\begin{lstlisting}[language=C, numbers=none]
-MPI_Scan(void *sendbuf, void *recvbuf, int count,
-         MPI_Datatype datatype, MPI_Op op, MPI_Comm comm)
-\end{lstlisting}
-La variante \texttt{MPI\_Exscan} (scan esclusivo) esclude il contributo del processo corrente, restituendo la riduzione dei soli processi \(0, 1, \ldots, i-1\). Lo scan è utile, ad esempio, per calcolare gli offset globali a partire da conteggi locali, come nella costruzione distribuita di un array compresso (CSR, coordinate sort, ecc.).
-
 \section{Tipi di dato}
 La specifica MPI definisce i tipi di dato base e consente anche di definire tipi personalizzati per gestire layout di memoria non contigui (es. colonne di matrici o strutture).
 
-\begin{table}[H]
-\centering
-\caption{I tipi di dato primitivi di MPI e i tipi corrispondenti in linguaggio C}
-\begin{tabular}{ll}
+\begin{longtable}{p{0.50\textwidth}p{0.35\textwidth}}
+\caption{I tipi di dato primitivi di MPI e i tipi corrispondenti in linguaggio C}\\
 \toprule
 MPI datatype & C datatype \\
 \midrule
+\endfirsthead
+
+\multicolumn{2}{c}%
+{\tablename\ \thetable\ -- \textit{Continua dalla pagina precedente}} \\
+\toprule
+MPI datatype & C datatype \\
+\midrule
+\endhead
+
+\bottomrule
+\multicolumn{2}{r}{\textit{Continua alla pagina successiva}} \\
+\endfoot
+
+\bottomrule
+\endlastfoot
+
 MPI\_CHAR                              & char \\
                                        & (treated as printable character) \\[4pt]
 MPI\_SHORT                             & signed short int \\
@@ -507,12 +154,10 @@ MPI\_C\_COMPLEX                        & float \_Complex \\
 MPI\_C\_FLOAT\_COMPLEX (as a synonym)  & float \_Complex \\
 MPI\_C\_DOUBLE\_COMPLEX                & double \_Complex \\
 MPI\_C\_LONG\_DOUBLE\_COMPLEX          & long double \_Complex \\
-\bottomrule
-\end{tabular}
-\end{table}
+\end{longtable}
 
 \subsection{Tipi di dato derivati}
-MPI permette di costruire \textbf{tipi di dato derivati} a partire dai tipi base, descrivendo esplicitamente la disposizione in memoria dei dati da trasmettere. Questo evita la necessità di copiare dati non contigui in un buffer temporaneo prima dell'invio. Un tipo derivato è definito da una sequenza di coppie \((\text{tipo base}_i,\, \text{displacement}_i)\), dove il displacement indica l'offset in byte rispetto all'inizio del buffer.
+MPI permette di costruire \keyword{tipi derivati} a partire dai tipi base, descrivendo esplicitamente la disposizione in memoria dei dati da trasmettere. Questo evita la necessità di copiare dati non contigui in un buffer temporaneo prima dell'invio. Un tipo derivato è definito da una sequenza di coppie \((\text{tipo\_base}_i,\, \text{displacement}_i)\), dove il displacement indica l'offset in byte rispetto all'inizio del buffer.
 
 Prima di poter essere utilizzato in una comunicazione, ogni tipo derivato deve essere \emph{committato} tramite la funzione \texttt{MPI\_Type\_commit(MPI\_Datatype *datatype)}.
 Al termine del suo utilizzo, il tipo deve essere liberato con \texttt{MPI\_Type\_free(MPI\_Datatype *datatype)}.
@@ -658,6 +303,516 @@ MPI_Send(&A[0][0], 1, sub_type, dest, tag, MPI_COMM_WORLD);
 MPI_Type_free(&sub_type);
 \end{lstlisting}
 Questo costruttore è particolarmente utile nella I/O parallela con \texttt{MPI\_File\_set\_view}, dove ogni processo descrive la propria porzione di un file condiviso tramite un tipo subarray.
+
+\section{Comunicazione Point-to-Point (P2P)} 
+La comunicazione tra due processi è il meccanismo base di MPI. Le operazioni fondamentali sono \keyword{send} (invio) e \keyword{receive} (ricezione). 
+
+\subsection{Operazioni bloccanti}
+Una \textit{blocking send} (\texttt{MPI\_Send}) non ritorna finché il buffer di invio non può essere riutilizzato in sicurezza. Una \textit{blocking receive} (\texttt{MPI\_Recv}) non ritorna finché i dati non sono stati ricevuti nel buffer di destinazione.
+
+\begin{lstlisting}[language=C, numbers=none]
+/*
+ * Parameters:
+ *  buf: address of send buffer
+ *  count: number of elements in send buffer
+ *  datatype: datatype of each send buffer element (handle)
+ *  dest: rank of destination
+ *  tag: message tag
+ *  comm: communicator (handle)
+ * 
+ * Returns:
+ *  an error code
+ */
+int MPI_Send(const void *buf, int count,
+             MPI_Datatype datatype, int dest,
+             int tag, MPI_Comm comm)
+
+/*
+ * Parameters:
+ *  buf: address of receive buffer
+ *  count: number of elements in receive buffer
+ *  datatype: datatype of each receive buffer element (handle)
+ *  source: rank of source or MPI_ANY_SOURCE
+ *  tag: message tag or MPI_ANY_tag
+ *  comm: communicator (handle)
+ *  status: status object
+ */
+int MPI_Recv(void *buf, int count, MPI_Datatype datatype,
+             int source, int tag, MPI_Comm comm,
+             MPI_Status *status)
+\end{lstlisting}
+
+Ad esempio, il seguente programma dimostra l'invio di un messaggio da parte del processo con rank \(0\) al processo con rank \(1\).
+\begin{lstlisting}[language=C, numbers=none]
+// Processo 0 invia a Processo 1
+if (myrank == 0) {
+    char msg = "Hello MPI";
+    MPI_Send(msg, 10, MPI_CHAR, 1, 99, MPI_COMM_WORLD);
+} else if (myrank == 1) {
+    char msg;
+    MPI_Recv(msg, 20, MPI_CHAR, 0, 99, MPI_COMM_WORLD, &status);
+}
+\end{lstlisting}
+
+Può risultare utile anche effettuare un invio ed una ricezione tra due processi mediante un'unica operazione.
+
+\begin{lstlisting}[language=C, numbers=none]
+/*
+ * Parameters:
+ *  sendbuf: address of send buffer
+ *  sendcount: number of elements in send buffer
+ *  sendtype: datatype of each send buffer element (handle)
+ *  dest: rank of destination
+ *  sendtag: send tag
+ *  recvbuf: address of receive buffer
+ *  recvcount: number of elements in receive buffer
+ *  recvtype: datatype of each receive buffer element (handle)
+ *  source: rank of source or MPI_ANY_SOURCE
+ *  recvtag: message tag or MPI_ANY_tag
+ *  comm: communicator (handle)
+ *  status: status object
+ * 
+ * Returns:
+ *  status code
+ */
+int MPI_Sendrecv(const void *sendbuf, int sendcount,
+                 MPI_Datatype sendtype, int dest,
+                 int sendtag,
+                 void *recvbuf, int recvcount,
+                 MPI_Datatype recvtype, int source,
+                 int recvtag, MPI_Comm comm,
+                 MPI_Status *status)
+\end{lstlisting}
+
+\begin{note}{Semantica e Ordine}
+    I messaggi sono \emph{nonovertaking}: se un mittente invia due messaggi in successione alla stessa destinazione, il secondo non può superare il primo se entrambi corrispondono alla stessa operazione di ricezione.
+\end{note}
+
+\begin{example}{Halo Exchange}
+    L'\emph{halo exchange} è un pattern comunicativo tra processi paralleli in una griglia.
+    Esso è richiesto, ad esempio, da un algoritmo stencil a 5 punti.\footnote{Lo stencil è una tecnica di calcolo numerico applicato su griglie di dati in cui per calcolare la nuova versione del dato \(\tilde{x}_{i,j}\) è necessario conoscere il valore dei dati adiacenti. In uno stencil a 5 punti, sono richiesti i dati \(x_{i, j-1}, x_{i+1, j}, x_{i, j+1}, x_{i-1, j}\).}
+    L'\emph{halo} è una regione di memoria del processo che contiene una copia dei valori dei processi adiacenti.
+    In uno stencil a 5 punti, ciascun processo ha un \emph{halo} contenente 4 dati.
+    Un algoritmo iterativo basato su \emph{halo exchange} si divide in due fasi. Ciascun processo: 
+    \begin{enumerate}
+        \item invia il proprio dato ai processi adiacenti e richiede ai processi adiacenti i dati per aggiornare il suo halo; 
+        \item effettua il calcolo.
+    \end{enumerate}
+    Vediamo un'implementazione con \texttt{MPI\_Sendrecv}:
+    \begin{lstlisting}[language=c]
+#include <mpi.h>
+#include <stdio.h>
+#include <stdlib.h>
+
+#define N 10  // Dimensione del tile NxN di competenza di un processo
+
+int main(int argc, char** argv) {
+    int rank, size;
+    int dims[2] = {0, 0};
+    int periods[2] = {0, 0};
+    int coords[2];
+    int up, down, left, right;
+    MPI_Comm cart_comm;
+    MPI_Datatype col_type;
+
+    MPI_Init(&argc, &argv);
+    MPI_Comm_rank(MPI_COMM_WORLD, &rank);
+    MPI_Comm_size(MPI_COMM_WORLD, &size);
+
+    // Crea topologia a griglia 2D
+    MPI_Dims_create(size, 2, dims);
+    MPI_Cart_create(MPI_COMM_WORLD, 2, dims, periods, 0, &cart_comm);
+    MPI_Cart_coords(cart_comm, rank, 2, coords);
+
+    // Calcola i rank dei processi adiacenti
+    MPI_Cart_shift(cart_comm, 0, 1, &up, &down);    // riga sopra/sotto
+    MPI_Cart_shift(cart_comm, 1, 1, &left, &right); // colonna sinistra/destra
+
+    /* Alloca tile (N+2)x(N+2) cosicchè la matrice contenga anche l'halo. Nota: gli angoli della matrice ([0,0], [0,N+1], [N+1][0], [N+1][N+1]) non verranno mai usati.
+    double (*tile)[N+2] = malloc((N+2) * sizeof(double[N+2]));
+
+    // Crea datatype per una colonna della matrice
+    MPI_Type_vector(N, 1, N+2, MPI_DOUBLE, &col_type);
+    MPI_Type_commit(&col_type);
+
+    // Inizializza la parte interna del tile
+    for (int i = 1; i <= N; i++)
+        for (int j = 1; j <= N; j++)
+            tile[i][j] = foo(tile[i][j]);
+
+    /* Scambia riga superiore: invia riga 1 (la prima riga della matrice interna), riceve in riga 0 (il bordo superiore dell'halo) */
+    MPI_Sendrecv(&tile[1][1], N, MPI_DOUBLE, up, 0,
+                 &tile[0][1], N, MPI_DOUBLE, up, 0,
+                 cart_comm, MPI_STATUS_IGNORE);
+
+    /* Scambia riga inferiore: invia riga N (l'ultima riga della matrice interna), riceve in riga N+1 (il bordo inferiore dell'halo) */
+    MPI_Sendrecv(&tile[N][1], N, MPI_DOUBLE, down, 1,
+                 &tile[N+1][1], N, MPI_DOUBLE, down, 1,
+                 cart_comm, MPI_STATUS_IGNORE);
+
+    /* Scambia colonna sinistra: invia colonna 1 (la prima colonna della matrice interna), riceve in colonna 0 (il bordo sinistro dell'halo) */
+    MPI_Sendrecv(&tile[1][1], 1, col_type, left, 2,
+                 &tile[1][0], 1, col_type, left, 2,
+                 cart_comm, MPI_STATUS_IGNORE);
+
+    /* Scambia colonna destra: invia colonna N (l'ultima colonna della matrice interna), riceve in colonna N+1 (il bordo destro dell'halo) */
+    MPI_Sendrecv(&tile[1][N], 1, col_type, right, 3,
+                 &tile[1][N+1], 1, col_type, right, 3,
+                 cart_comm, MPI_STATUS_IGNORE);
+
+    // ora il tile contiene i dati dell'halo aggiornati
+    // ... calcolo stencil ...
+
+    MPI_Type_free(&col_type);
+    free(tile);
+
+    MPI_Finalize();
+    return 0;
+}
+    \end{lstlisting}
+
+\end{example}
+
+\subsection{Operazioni non bloccanti}
+Alle volte non è strettamente necessario che una comunicazione debba essere bloccante.
+In questi casi, è quasi sempre conveniente adoperare comunicazioni non bloccanti.
+Altre volte, invece, la comunicazione non bloccante è d'obbligo.
+
+Una \textit{non-blocking send} (\texttt{MPI\_Isend}) restituisce subito il controllo al chiamante e non aspetta che il messaggio venga recapitato. 
+Una \textit{non-blocking receive} (\texttt{MPI\_Irecv}) è una ricezione asincrona: il controllo è restituito immediatamente al chiamante senza attendere la ricezione del messaggio. 
+Le comunicazioni non bloccanti usano oggetti opachi, i \emph{request objects}, per identificare le operazioni e legare l'operazione che inizia la comunicazione con quella che la termina.
+
+\begin{lstlisting}[language=C, numbers=none]
+/*
+ * Parameters:
+ *  buf: address of send buffer
+ *  count: number of elements in send buffer
+ *  datatype: datatype of each send buffer element (handle)
+ *  dest: rank of destination
+ *  tag: message tag
+ *  comm: communicator (handle)
+ *  request: communication request (handle)
+ * 
+ * Returns:
+ *  an error code
+ */
+MPI_Isend(const void *buf, int count, MPI_Datatype datatype,
+          int dest, int tag, MPI_Comm comm,
+          MPI_Request *request)
+
+/*
+ * Parameters:
+ *  buf: address of receive buffer
+ *  count: number of elements in receive buffer
+ *  datatype: datatype of each receive buffer element (handle)
+ *  source: rank of source or MPI_ANY_SOURCE
+ *  tag: message tag or MPI_ANY_tag
+ *  comm: communicator (handle)
+ *  request: communication request (handle)
+ * 
+ * Returns:
+ *  an error code
+ */
+int MPI_Irecv(void *buf, int count, MPI_Datatype datatype,
+             int source, int tag, MPI_Comm comm,
+             MPI_Request *request)
+\end{lstlisting}
+
+Il \emph{request object} contiene informazioni sullo stato (e.g. pending) dell'operazione e la sua lettura è necessaria per accertare il completamento di un'operazione non bloccante.
+Le funzioni \texttt{MPI\_Wait} e \texttt{MPI\_Test} sono utilizzate con questo scopo.
+
+\begin{note}{}
+    Per completamento dell'operazione di invio si intende che il mittente può riutilizzare il buffer di invio con sicurezza.
+    Il destinatario potrebbe tuttavia non aver ancora ricevuto per intero il messaggio, residente nel sottosistema di comunicazione.
+    Per completamento dell'operazione di ricezione si intende che il messaggio è contenuto completamente nel buffer di ricezione.
+\end{note}
+
+\subsubsection{MPI\_Wait}
+\texttt{MPI\_Wait} blocca il processo chiamante fino al completamento dell'operazione associata alla request:
+\begin{lstlisting}[language=C, numbers=none]
+MPI_Wait(MPI_Request *request, MPI_Status *status)
+\end{lstlisting}
+Al termine, \texttt{request} viene impostata a \texttt{MPI\_REQUEST\_NULL} e \texttt{status} contiene le informazioni sul messaggio ricevuto (sorgente, tag, eventuale errore). Se tali informazioni non sono necessarie, è possibile passare \texttt{MPI\_STATUS\_IGNORE} al posto di \texttt{status}.
+
+Il pattern tipico consiste nell'avviare una comunicazione non bloccante, svolgere del lavoro indipendente in sovrapposizione, e poi attendere il completamento prima di accedere al buffer:
+\begin{lstlisting}[language=C, numbers=none]
+MPI_Request req;
+double buf[N];
+
+/* Avvia la ricezione non bloccante */
+MPI_Irecv(buf, N, MPI_DOUBLE, src, tag, MPI_COMM_WORLD, &req);
+
+/* Lavoro indipendente dal contenuto di buf */
+compute_something_else();
+
+/* Attende il completamento prima di usare buf */
+MPI_Wait(&req, MPI_STATUS_IGNORE);
+process(buf);
+\end{lstlisting}
+
+\subsubsection{MPI\_Test}
+\texttt{MPI\_Test} verifica se un'operazione è completata senza bloccare il processo:
+\begin{lstlisting}[language=C, numbers=none]
+MPI_Test(MPI_Request *request, int *flag, MPI_Status *status)
+\end{lstlisting}
+Se l'operazione è completata, \texttt{flag} viene impostato a un valore diverso da zero e \texttt{request} viene azzerata come in \texttt{MPI\_Wait}; altrimenti \texttt{flag} vale zero e \texttt{status} non è significativo.
+
+\texttt{MPI\_Test} è utile quando il processo ha più lavoro utile da svolgere e vuole completarlo prima di cedere il controllo alla libreria MPI:
+\begin{lstlisting}[language=C, numbers=none]
+MPI_Request req;
+double buf[N];
+int done = 0;
+
+MPI_Irecv(buf, N, MPI_DOUBLE, src, tag, MPI_COMM_WORLD, &req);
+
+while (!done) {
+    MPI_Test(&req, &done, MPI_STATUS_IGNORE);
+    /* Esegue un'iterazione di lavoro indipendente
+       ad ogni controllo */
+    do_work_increment();
+}
+
+process(buf);
+\end{lstlisting}
+
+\subsubsection{Varianti su insiemi di request}
+Quando si gestiscono più comunicazioni non bloccanti simultaneamente, usare \texttt{MPI\_Wait} o \texttt{MPI\_Test} su ciascuna request separatamente è inefficiente. MPI fornisce varianti che operano su array di request:
+
+\begin{itemize}
+    \item \texttt{MPI\_Waitall(int count, MPI\_Request *reqs, MPI\_Status *statuses)}: blocca fino al completamento di \emph{tutte} le operazioni nell'array;
+    \item \texttt{MPI\_Waitany(int count, MPI\_Request *reqs, int *index, MPI\_Status *status)}: blocca fino al completamento di \emph{almeno una} operazione, restituendone l'indice in \texttt{index};
+    \item \texttt{MPI\_Waitsome(int count, MPI\_Request *reqs, int *outcount, int *indices, MPI\_Status *statuses)}: blocca fino al completamento di \emph{almeno una} operazione e restituisce gli indici di tutte quelle già terminate al momento del ritorno.
+\end{itemize}
+Le corrispondenti varianti non bloccanti \texttt{MPI\_Testall}, \texttt{MPI\_Testany} e \texttt{MPI\_Testsome} hanno la stessa semantica ma ritornano immediatamente.
+
+\begin{example}{Halo Exchange II}
+    Ritorniamo all'esempio precedente sull'\emph{halo exchange}. Se una parte dei dati è indipendente dall'halo, allora è inutile aspettare l'\emph{halo exchange}: meglio richiedere un trasferimento non bloccante con \texttt{MPI\_Isend} e \texttt{MPI\_recv}, calcolare e poi attendere il completamento del trasferimento con \texttt{MPI\_Waitall}, ed infine calcolare il resto.
+    In questo modo, è possibile coprire una parte del costo di trasferimento.
+    \begin{lstlisting}[language=C]
+#include <mpi.h>
+#include <stdio.h>
+#include <stdlib.h>
+
+#define N 10  // Dimensione del tile NxN di competenza di un processo
+
+int main(int argc, char** argv) {
+    int rank, size;
+    int dims[2] = {0, 0};
+    int periods[2] = {0, 0};
+    int coords[2];
+    int up, down, left, right;
+    MPI_Comm cart_comm;
+    MPI_Datatype col_type;
+    MPI_Request requests[8];
+    MPI_Status statuses[8];
+
+    MPI_Init(&argc, &argv);
+    MPI_Comm_rank(MPI_COMM_WORLD, &rank);
+    MPI_Comm_size(MPI_COMM_WORLD, &size);
+
+    MPI_Dims_create(size, 2, dims);
+    MPI_Cart_create(MPI_COMM_WORLD, 2, dims, periods, 0, &cart_comm);
+    MPI_Cart_coords(cart_comm, rank, 2, coords);
+
+    MPI_Cart_shift(cart_comm, 0, 1, &up, &down);    // riga sopra/sotto
+    MPI_Cart_shift(cart_comm, 1, 1, &left, &right); // colonna sinistra/destra
+
+    double (*tile)[N+2] = malloc((N+2) * sizeof(double[N+2]));
+
+    MPI_Type_vector(N, 1, N+2, MPI_DOUBLE, &col_type);
+    MPI_Type_commit(&col_type);
+
+    for (int i = 1; i <= N; i++)
+        for (int j = 1; j <= N; j++)
+            tile[i][j] = foo(tile[i][j]);
+
+    int req_count = 0;
+
+    MPI_Irecv(&tile[0][1], N, MPI_DOUBLE, up, 0,
+              cart_comm, &requests[req_count++]);
+    MPI_Isend(&tile[1][1], N, MPI_DOUBLE, up, 0,
+              cart_comm, &requests[req_count++]);
+
+    MPI_Irecv(&tile[N+1][1], N, MPI_DOUBLE, down, 1,
+              cart_comm, &requests[req_count++]);
+    MPI_Isend(&tile[N][1], N, MPI_DOUBLE, down, 1,
+              cart_comm, &requests[req_count++]);
+
+    MPI_Irecv(&tile[1][0], 1, col_type, left, 2,
+              cart_comm, &requests[req_count++]);
+    MPI_Isend(&tile[1][1], 1, col_type, left, 2,
+              cart_comm, &requests[req_count++]);
+
+    MPI_Irecv(&tile[1][N+1], 1, col_type, right, 3,
+              cart_comm, &requests[req_count++]);
+    MPI_Isend(&tile[1][N], 1, col_type, right, 3,
+              cart_comm, &requests[req_count++]);
+
+    // ... calcoli locali che non dipendono dall'halo ...
+
+    MPI_Waitall(req_count, requests, statuses);
+
+    // ... calcolo stencil che dipende dall'halo ...
+
+    MPI_Type_free(&col_type);
+    free(tile);
+
+    MPI_Finalize();
+    return 0;
+}
+    \end{lstlisting}
+\end{example}
+
+\section{Comunicazioni Collettive}
+Le operazioni collettive coinvolgono un gruppo di processi (definito da un comunicatore come \texttt{MPI\_COMM\_WORLD}).
+A differenza delle comunicazioni punto a punto, ogni processo del comunicatore deve invocare la stessa operazione collettiva. Le operazioni collettive sono implicitamente sincronizzanti: nessun processo può procedere oltre la chiamata finché tutti gli altri non l'hanno raggiunta.
+
+\subsection{Barriera}
+L'operazione più semplice è la barriera di sincronizzazione, che blocca ogni processo fino a quando tutti i membri del comunicatore non l'hanno raggiunta:
+\begin{lstlisting}[language=C, numbers=none]
+MPI_Barrier(MPI_Comm comm)
+\end{lstlisting}
+La barriera non trasferisce dati ed è tipicamente usata per sincronizzare le fasi di un programma, ad esempio per garantire che tutti i processi abbiano completato una scrittura su file prima che un altro inizi a leggere.
+
+\subsection{Broadcast}
+Il broadcast trasmette un messaggio da un processo radice (\emph{root}) a tutti gli altri processi del comunicatore:
+\begin{lstlisting}[language=C, numbers=none]
+MPI_Bcast(void *buffer, int count, MPI_Datatype datatype,
+          int root, MPI_Comm comm)
+\end{lstlisting}
+Il processo radice è l'unico a fornire dati significativi in \texttt{buffer}; al termine della chiamata, tutti i processi dispongono della stessa copia.
+
+Ad esempio, per distribuire un array di parametri letto dal processo 0:
+\begin{lstlisting}[language=C, numbers=none]
+double params[10];
+
+if (rank == 0) {
+    /* Solo il processo 0 legge i parametri da file */
+    read_parameters(params);
+}
+
+/* Tutti i processi ricevono la stessa copia di params */
+MPI_Bcast(params, 10, MPI_DOUBLE, 0, MPI_COMM_WORLD);
+\end{lstlisting}
+
+\subsection{Scatter e Gather}
+Lo scatter distribuisce porzioni distinte di un buffer dal processo radice a tutti i processi; il gather esegue l'operazione inversa, raccogliendo i contributi di ogni processo in un unico buffer sul radice.
+\begin{lstlisting}[language=C, numbers=none]
+MPI_Scatter(void *sendbuf, int sendcount, MPI_Datatype sendtype,
+            void *recvbuf, int recvcount, MPI_Datatype recvtype,
+            int root, MPI_Comm comm)
+
+MPI_Gather(void *sendbuf, int sendcount, MPI_Datatype sendtype,
+           void *recvbuf, int recvcount, MPI_Datatype recvtype,
+           int root, MPI_Comm comm)
+\end{lstlisting}
+\texttt{sendcount} indica il numero di elementi inviati a \emph{ciascun} processo (non il totale). Il buffer di invio deve quindi contenere almeno \texttt{sendcount * size} elementi, dove \texttt{size} è il numero di processi nel comunicatore.
+
+Ad esempio, per distribuire un vettore di \(N\) elementi e raccogliere i risultati dopo un'elaborazione locale:
+\begin{lstlisting}[language=C, numbers=none]
+int N = 8, size, rank;
+MPI_Comm_size(MPI_COMM_WORLD, &size);
+MPI_Comm_rank(MPI_COMM_WORLD, &rank);
+
+int chunk = N / size; /* elementi per processo */
+double *global = NULL;
+double local[chunk];
+
+if (rank == 0) {
+    global = malloc(N * sizeof(double));
+    for (int i = 0; i < N; i++) global[i] = (double)i;
+}
+
+MPI_Scatter(global, chunk, MPI_DOUBLE,
+            local,  chunk, MPI_DOUBLE,
+            0, MPI_COMM_WORLD);
+
+/* Elaborazione locale */
+for (int i = 0; i < chunk; i++) local[i] *= 2.0;
+
+MPI_Gather(local,  chunk, MPI_DOUBLE,
+           global, chunk, MPI_DOUBLE,
+           0, MPI_COMM_WORLD);
+
+if (rank == 0) free(global);
+\end{lstlisting}
+Quando le porzioni da distribuire hanno dimensioni diverse tra i processi, si utilizzano le varianti \texttt{MPI\_Scatterv} e \texttt{MPI\_Gatherv}, che accettano array di conteggi e displacement.
+
+\subsection{Allgather e Alltoall}
+\texttt{MPI\_Allgather} equivale a un gather seguito da un broadcast: ogni processo raccoglie i contributi di tutti gli altri, ottenendo alla fine lo stesso buffer completo.
+\begin{lstlisting}[language=C, numbers=none]
+MPI_Allgather(void *sendbuf, int sendcount, MPI_Datatype sendtype,
+              void *recvbuf, int recvcount, MPI_Datatype recvtype,
+              MPI_Comm comm)
+\end{lstlisting}
+
+\texttt{MPI\_Alltoall} realizza invece una trasposizione collettiva: ogni processo invia una porzione distinta a ciascun altro processo e riceve una porzione distinta da ciascuno. È l'operazione collettiva più generale in termini di traffico di rete ed è spesso il collo di bottiglia nelle applicazioni che richiedono una ridistribuzione globale dei dati, come la trasformata di Fourier parallela.
+\begin{lstlisting}[language=C, numbers=none]
+MPI_Alltoall(void *sendbuf, int sendcount, MPI_Datatype sendtype,
+             void *recvbuf, int recvcount, MPI_Datatype recvtype,
+             MPI_Comm comm)
+\end{lstlisting}
+
+\subsection{Riduzione}
+Le operazioni di riduzione combinano i valori forniti da tutti i processi tramite un operatore (es. somma, massimo) e depositano il risultato sul processo radice:
+\begin{lstlisting}[language=C, numbers=none]
+MPI_Reduce(void *sendbuf, void *recvbuf, int count,
+           MPI_Datatype datatype, MPI_Op op,
+           int root, MPI_Comm comm)
+\end{lstlisting}
+Gli operatori predefiniti più comuni sono riportati in Tabella~\ref{tab:mpi_op}.
+
+\begin{table}[h!]
+\centering
+\caption{Principali operatori predefiniti per \texttt{MPI\_Reduce}}
+\label{tab:mpi_op}
+\begin{tabular}{ll}
+\toprule
+Operatore & Operazione \\
+\midrule
+\texttt{MPI\_SUM}    & Somma \\
+\texttt{MPI\_PROD}   & Prodotto \\
+\texttt{MPI\_MAX}    & Massimo \\
+\texttt{MPI\_MIN}    & Minimo \\
+\texttt{MPI\_LAND}   & AND logico \\
+\texttt{MPI\_LOR}    & OR logico \\
+\texttt{MPI\_BAND}   & AND bit a bit \\
+\texttt{MPI\_BOR}    & OR bit a bit \\
+\texttt{MPI\_MAXLOC} & Massimo e indice del processo \\
+\texttt{MPI\_MINLOC} & Minimo e indice del processo \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+Ad esempio, per calcolare la somma globale di un valore parziale calcolato da ciascun processo:
+\begin{lstlisting}[language=C, numbers=none]
+double local_sum = compute_partial_sum(rank);
+double global_sum = 0.0;
+
+MPI_Reduce(&local_sum, &global_sum, 1, MPI_DOUBLE,
+           MPI_SUM, 0, MPI_COMM_WORLD);
+
+if (rank == 0)
+    printf("Somma globale: %f\n", global_sum);
+\end{lstlisting}
+La variante \texttt{MPI\_Allreduce} distribuisce il risultato a tutti i processi anziché solo al processo radice, evitando un successivo broadcast:
+\begin{lstlisting}[language=C, numbers=none]
+MPI_Allreduce(&local_sum, &global_sum, 1, MPI_DOUBLE,
+              MPI_SUM, MPI_COMM_WORLD);
+\end{lstlisting}
+È inoltre possibile definire operatori personalizzati tramite \texttt{MPI\_Op\_create}, passando una funzione con la firma:
+\begin{lstlisting}[language=C, numbers=none]
+void my_op(void *in, void *inout, int *len, MPI_Datatype *type);
+\end{lstlisting}
+dove \texttt{inout} contiene il risultato parziale accumulato e deve essere aggiornato in-place combinandolo con \texttt{in}.
+
+\subsection{Scan}
+Lo scan (o riduzione prefissa) calcola riduzioni parziali: il processo \(i\) riceve il risultato della riduzione applicata ai contributi dei processi \(0, 1, \ldots, i\):
+\begin{lstlisting}[language=C, numbers=none]
+MPI_Scan(void *sendbuf, void *recvbuf, int count,
+         MPI_Datatype datatype, MPI_Op op, MPI_Comm comm)
+\end{lstlisting}
+La variante \texttt{MPI\_Exscan} (scan esclusivo) esclude il contributo del processo corrente, restituendo la riduzione dei soli processi \(0, 1, \ldots, i-1\). Lo scan è utile, ad esempio, per calcolare gli offset globali a partire da conteggi locali, come nella costruzione distribuita di un array compresso (CSR, coordinate sort, ecc.).
 
 \section{Gestione degli errori} 
 Per impostazione predefinita, MPI termina l'esecuzione del programma non appena si verifica un errore. 
@@ -872,17 +1027,17 @@ Pertanto, esistono diverse implementazioni, sia open-source che proprietarie, sv
 Queste implementazioni sono ampiamente utilizzate in ambito accademico e nei cluster di calcolo generici per la loro flessibilità e aderenza agli standard.
 
 \begin{itemize}
-    \item \keyword{MPICH}: Sviluppata originariamente dall'\textit{Argonne National Laboratory}, è una delle implementazioni storiche più influenti. Molte altre implementazioni (comprese alcune commerciali) derivano dal codice sorgente di MPICH. È nota per la sua estrema portabilità e per essere spesso la prima a implementare le nuove versioni dello standard MPI.
-    \item \keyword{Open MPI}: Risultato della fusione di diversi progetti precedenti (come LAM/MPI e FT-MPI), Open MPI è oggi lo standard di fatto in molti ambienti HPC. Si distingue per un'architettura modulare che permette di caricare dinamicamente componenti ottimizzati per specifiche reti o sistemi di gestione dei processi.
+    \item \emph{MPICH}: Sviluppata originariamente dall'\textit{Argonne National Laboratory}, è una delle implementazioni storiche più influenti. Molte altre implementazioni (comprese alcune commerciali) derivano dal codice sorgente di MPICH. È nota per la sua estrema portabilità e per essere spesso la prima a implementare le nuove versioni dello standard MPI.
+    \item \emph{Open MPI}: Risultato della fusione di diversi progetti precedenti (come LAM/MPI e FT-MPI), Open MPI è oggi lo standard di fatto in molti ambienti HPC. Si distingue per un'architettura modulare che permette di caricare dinamicamente componenti ottimizzati per specifiche reti o sistemi di gestione dei processi.
 \end{itemize}
 
 \subsection{Implementazioni proprietarie}
 I produttori di hardware spesso forniscono versioni ottimizzate di MPI per estrarre le massime prestazioni dai loro sistemi specifici.
 
 \begin{itemize}
-    \item \keyword{Intel MPI}: Basata originariamente su MPICH, è ottimizzata specificamente per processori e interconnessioni Intel.
-    \item \keyword{IBM Spectrum MPI}: Utilizzata comunemente sui supercomputer IBM, offre ottimizzazioni avanzate per l'hardware Power e le GPU.
-    \item \keyword{NVIDIA/Mellanox HPC-X}: Una suite che include implementazioni ottimizzate per interconnessioni ad altissima velocità come InfiniBand.
+    \item \emph{Intel MPI}: Basata originariamente su MPICH, è ottimizzata specificamente per processori e interconnessioni Intel.
+    \item \emph{IBM Spectrum MPI}: Utilizzata comunemente sui supercomputer IBM, offre ottimizzazioni avanzate per l'hardware Power e le GPU.
+    \item \emph{NVIDIA/Mellanox HPC-X}: Una suite che include implementazioni ottimizzate per interconnessioni ad altissima velocità come InfiniBand.
 \end{itemize}
 
 \begin{observation}{Scelta dell'implementazione}
