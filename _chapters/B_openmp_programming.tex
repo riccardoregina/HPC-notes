@@ -63,6 +63,12 @@ int omp_get_num_threads(void);
 void omp_set_num_threads(int num_threads);
 \end{lstlisting}
 
+\begin{warning}{Oversubscription}
+    L'\keyword{oversubscription} si verifica quando il numero di thread supera il numero di core logici disponibili sulla macchina. 
+    Questo porta ad un aumento del \emph{context switching} e quindi ad un possibile degrado delle prestazioni. 
+    Una buona pratica per contrastare il problema è assicurarsi che il numero di thread per l'esecuzione sia quello desiderato, controllando la variabile d'ambiente \texttt{OMP\_NUM\_THREADS} o invocando \texttt{omp\_set\_num\_threads()} all'interno del programma.
+\end{warning}
+
 \section{Ripartizione del Lavoro}
 All'interno di una regione parallela, senza ulteriori direttive, il codice viene eseguito da \emph{tutti} i thread. 
 Per dividere il lavoro tra i thread, si usano i costrutti di \keyword{worksharing}.
@@ -95,6 +101,37 @@ La clausola viene espressa come \texttt{schedule(<strategy>, chunk)}, che suddiv
     \item \texttt{dynamic}: I chunk vengono assegnati \emph{durante} l'esecuzione. Ogni thread che termina un blocco ne richiede un altro. Questa strategia di scheduling è utile per bilanciare carichi di lavoro non uniformi.
     \item \texttt{guided}: Simile alla \texttt{dynamic}, ma la dimensione dei blocchi diminuisce nel tempo, partendo da un valore grande e riducendosi fino a \texttt{chunk}. Riduce l'overhead rispetto alla \texttt{dynamic} mantenendo un buon bilanciamento.
 \end{itemize}
+
+\begin{warning}{False Sharing}
+    Il \keyword{false sharing} si verifica quando thread diversi modificano dati che, pur essendo logicamente indipendenti, risiedono fisicamente nella stessa \emph{cache line}. 
+    Ciò causa una continua e silente invalidazione delle cache dei core.\footnote{Ciascun core è dotato di una propria cache.}
+    Il false sharing è un problema di prestazioni, non di correttezza.
+    Infatti, supponiamo di eseguire il seguente codice con 8 core e 8 thread e che una cache line abbia dimensione 64 byte.
+
+    \begin{lstlisting}[language=C]
+const int num_threads = omp_get_num_threads(); // thread_num = 8
+double sum[num_threads]; // sum è un vettore di 8 double
+
+#pragma omp parallel for
+for (int i = 0; i < N; i++) {
+    sum[omp_get_thread_num()] += i;
+}
+    \end{lstlisting}
+
+    \noindent
+    Poichè un \texttt{double} occupa 8 byte, l'intero vettore \texttt{sum} entra perfettamente in una cache line.
+    Quando un thread modifica il suo elemento, invalida la cache line per gli altri core, che saranno costretti a caricare tale cache line dalla memoria.
+    La soluzione è impiegare del padding, dimodochè ciascun elemento sia in una cache line diversa.
+
+    \begin{lstlisting}[language=C]
+struct { double val; char pad[56]; } sum_padded[NUM_THREADS]; /* sum_padded è un vettore di num_threads elementi di tipo struct { double; char[56] } */
+
+#pragma omp parallel for
+for (int i = 0; i < N; i++) {
+    sum_padded[omp_get_thread_num()].val += i;
+}
+    \end{lstlisting}
+\end{warning}
 
 \subsection{Costrutto \texttt{sections}}
 Il costrutto \texttt{sections} permette di eseguire blocchi di codice indipendenti in parallelo, realizzando un parallelismo asimmetrico.
@@ -427,45 +464,4 @@ I tipi di dipendenza sono:
     \item \texttt{inout}: Il task legge e scrive la variabile (dipendenza di lettura-scrittura);
     \item \texttt{mutexinoutset}: Il task accede alla variabile in mutua esclusione con altri task che usano la stessa clausola.
 \end{itemize}
-
-\section{Problemi Tipici}
-La programmazione OpenMP è decisamente più snella di quella MPI. Tuttavia, OpenMP presenta alcune sue peculiari insidie, di cui le \emph{data race} sono solo l'esempio più banale.
-
-\subsection{False Sharing}
-Il \keyword{false sharing} si verifica quando thread diversi modificano dati che, pur essendo logicamente indipendenti, risiedono fisicamente nella stessa \emph{cache line}. 
-Ciò causa una continua e silente invalidazione delle cache dei core.\footnote{Ciascun core è dotato di una propria cache.}
-Infatti, supponiamo di eseguire il seguente codice con 8 core e 8 thread e che una cache line abbia dimensione 64 byte.
-
-\begin{lstlisting}[language=C]
-const int num_threads = omp_get_num_threads(); // thread_num = 8
-double sum[num_threads]; // sum è un vettore di 8 double
-
-#pragma omp parallel for
-for (int i = 0; i < N; i++) {
-    sum[omp_get_thread_num()] += i;
-}
-\end{lstlisting}
-
-\noindent
-Poichè un \texttt{double} occupa 8 byte, l'intero vettore \texttt{sum} entra perfettamente in una cache line.
-Quando un thread modifica il suo elemento, invalida la cache line per gli altri core, che saranno costretti a caricare tale cache line dalla memoria.
-La soluzione è impiegare del padding, dimodochè ciascun elemento sia in una cache line diversa.
-
-\begin{lstlisting}[language=C]
-struct { double val; char pad[56]; } sum_padded[NUM_THREADS]; /* sum_padded è un vettore di num_threads elementi di tipo struct { double; char[56] } */
-
-#pragma omp parallel for
-for (int i = 0; i < N; i++) {
-    sum_padded[omp_get_thread_num()].val += i;
-}
-\end{lstlisting}
-
-\begin{note}{}
-    Il false sharing è un problema di prestazioni, non di correttezza.
-\end{note}
-
-\subsection{Oversubscription}
-L'\keyword{oversubscription} si verifica quando il numero di thread supera il numero di core logici disponibili sulla macchina. 
-Questo porta ad un aumento del \emph{context switching} e quindi ad un possibile degrado delle prestazioni. 
-Una buona pratica per contrastare il problema è assicurarsi che il numero di thread per l'esecuzione sia quello desiderato, controllando la variabile d'ambiente \texttt{OMP\_NUM\_THREADS} o invocando \texttt{omp\_set\_num\_threads()} all'interno del programma.
 
