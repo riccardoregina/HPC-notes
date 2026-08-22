@@ -32,7 +32,7 @@ La tassonomia di Flynn è un modello di classificazione delle architetture dei c
 \end{figure}
 
 \begin{note}{}
-Nell'articolo in cui viene presentata la tassonomia, Flynn parla di Instruction stream, non di singola istruzione, e di Data stream, non di singolo dato. In questo contesto, la famiglia MISD assume senso: su un singolo stream di dati, vengono applicati tanti stream di istruzioni, intese come istruzioni aritmetiche. Pertanto, una macchina MISD prevede una singola CU ma con un ALU con capacità pipelining.
+Nell'articolo in cui viene presentata la tassonomia, Flynn parla di Instruction stream, non di singola istruzione, e di Data stream, non di singolo dato. In questo contesto, la famiglia MISD assume senso: su un singolo stream di dati, vengono applicati tanti stream di istruzioni, intese come istruzioni aritmetiche. Pertanto, una macchina MISD prevede una singola CU ma con una ALU con capacità pipelining.
 \end{note}
 
 Sebbene la tassonomia di Flynn sia a fondamento della classificazione dei calcolatori, nel tempo si è passati sempre di più ad architetture ibride ed eterogenee. Si parla di \keyword{architettura ibrida} quando essa presenta più livelli di parallelismo, in cui i livelli appartengono a famiglie distinte di calcolatori paralleli secondo la tassonomia di Flynn.
@@ -64,11 +64,11 @@ Nella prima strategia, vengono effettuate $3$ operazioni (un'assegnazione e tre 
 Le $2$ operazioni del primo passo avvengono in parallelo, mentre l'unica operazione del secondo passo avviene in modo sequenziale.
 Nella terza strategia, vengono effettuate $4$ operazioni al primo passo, $4$ al secondo e $4$ al terzo. Tutte le operazioni avvengono in parallelo.
 
-\begin{note}
+\begin{note}{}
   Si potrebbe pensare che la terza strategia sia un'inutile complicazione della seconda: perché effettuare più calcoli solo per avere il risultato finale in tutti i nodi? Cerchiamo di rispondere citando i vantaggi di questo approccio:
   \begin{enumerate}
     \item poiché i nodi devono essere sincronizzati, non c'è alcun vantaggio nel far riposare un nodo durante il calcolo, a meno che non sia strettamente necessario liberare quanto prima i nodi. Insomma, facendo lavorare di più tutti i nodi, si sfrutta meglio la potenza computazionale a disposizione;
-    \item avere il risultato finale in tutti i nodi può essere utile se si vuole utilizzare tale risultato su ciascuno di quei nodi;
+    \item avere il risultato finale in tutti i nodi può essere utile se si vuole utilizzare tale risultato su ciascuno di quei nodi.
   \end{enumerate}
 \end{note}
 
